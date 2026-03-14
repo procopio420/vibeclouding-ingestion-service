@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": "api",
+      "label": "api",
+      "type": "api",
+      "description": "Main API service handling HTTP requests",
+      "technologies": [
+        "FastAPI"
+      ]
+    },
+    {
+      "id": "frontend",
+      "label": "frontend",
+      "type": "frontend",
+      "description": "Frontend application",
+      "technologies": [
+        "JavaScript/TypeScript"
+      ]
+    },
+    {
+      "id": "worker",
+      "label": "worker",
+      "type": "worker",
+      "description": "Background job processor",
+      "technologies": [
+        "RQ"
+      ]
+    },
+    {
+      "id": "database",
+      "label": "database",
+      "type": "database",
+      "description": "Primary database for persistent storage",
+      "technologies": [
+        "SQLAlchemy",
+        "Alembic"
+      ]
+    },
+    {
+      "id": "cache",
+      "label": "cache",
+      "type": "cache",
+      "description": "Redis for job queue and caching",
+      "technologies": [
+        "Redis"
+      ]
+    },
+    {
+      "id": "whatsapp_api",
+      "label": "whatsapp_api",
+      "type": "external_service",
+      "description": "WhatsApp Cloud API integration for messaging",
+      "technologies": [
+        "WhatsApp Cloud API"
+      ]
+    },
+    {
+      "id": "payment_gateway",
+      "label": "payment_gateway",
+      "type": "external_service",
+      "description": "Stripe payment processing",
+      "technologies": [
+        "Stripe"
+      ]
+    }
+  ],
+  "edges": [],
+  "groups": [
+    {
+      "id": "api",
+      "label": "Api",
+      "nodes": [
+        "api"
+      ]
+    },
+    {
+      "id": "frontend",
+      "label": "Frontend",
+      "nodes": [
+        "frontend"
+      ]
+    },
+    {
+      "id": "worker",
+      "label": "Worker",
+      "nodes": [
+        "worker"
+      ]
+    },
+    {
+      "id": "database",
+      "label": "Database",
+      "nodes": [
+        "database"
+      ]
+    },
+    {
+      "id": "cache",
+      "label": "Cache",
+      "nodes": [
+        "cache"
+      ]
+    },
+    {
+      "id": "external_service",
+      "label": "External_Service",
+      "nodes": [
+        "whatsapp_api",
+        "payment_gateway"
+      ]
+    }
+  ],
+  "assumptions": [
+    "API likely uses database for persistent storage",
+    "Background jobs likely use Redis queue",
+    "Multi-tenant architecture detected from README",
+    "WhatsApp Cloud API integration for messaging"
+  ],
+  "uncertainties": [
+    "No containerization detected - deployment approach unclear",
+    "No .env.example found - configuration management unclear"
+  ],
+  "open_questions": [
+    "What is the tenant isolation strategy (schema-level, database-level, or host-based)?",
+    "How are WhatsApp webhooks authenticated and rate-limited?",
+    "What is the database migration strategy?",
+    "How is the application containerized for deployment?",
+    "What is the deployment target (bare metal, k8s, serverless)?",
+    "How is multi-tenancy implemented (database, schema, or code-level)?",
+    "What environment variables are required for deployment?",
+    "What secrets need to be managed (API keys, database credentials)?",
+    "How are workers scaled (horizontal pod autoscaling, number of replicas)?",
+    "What happens when a job fails - retry policy?"
+  ]
+}

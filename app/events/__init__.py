@@ -1,0 +1,1 @@
+"""Event contract scaffolding package."""

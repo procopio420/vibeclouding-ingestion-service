@@ -1,0 +1,142 @@
+{
+  "version": 1,
+  "flows": [
+    {
+      "source": "api",
+      "target": "database",
+      "type": "http",
+      "label": "api_to_database",
+      "description": "API queries database via SQLAlchemy ORM",
+      "confidence": 0.85
+    },
+    {
+      "source": "api",
+      "target": "cache",
+      "type": "http",
+      "label": "api_to_cache",
+      "description": "API uses Redis for caching and session storage",
+      "confidence": 0.75
+    },
+    {
+      "source": "api",
+      "target": "cache",
+      "type": "http",
+      "label": "api_to_queue",
+      "description": "API enqueues jobs to Redis/RQ",
+      "confidence": 0.8
+    },
+    {
+      "source": "cache",
+      "target": "worker",
+      "type": "http",
+      "label": "worker_from_queue",
+      "description": "Worker picks up jobs from Redis queue",
+      "confidence": 0.8
+    },
+    {
+      "source": "worker",
+      "target": "database",
+      "type": "http",
+      "label": "worker_to_database",
+      "description": "Worker queries database for job processing",
+      "confidence": 0.7
+    },
+    {
+      "source": "frontend",
+      "target": "api",
+      "type": "http",
+      "label": "frontend_to_api",
+      "description": "Frontend makes HTTP API requests",
+      "confidence": 0.85
+    },
+    {
+      "source": "whatsapp_api",
+      "target": "api",
+      "type": "http",
+      "label": "whatsapp_to_api",
+      "description": "WhatsApp Cloud API sends webhooks to API",
+      "confidence": 0.85
+    }
+  ],
+  "nodes": [],
+  "edges": [
+    {
+      "source": "api",
+      "target": "database",
+      "type": "http",
+      "label": "api_to_database",
+      "description": "API queries database via SQLAlchemy ORM",
+      "confidence": 0.85
+    },
+    {
+      "source": "api",
+      "target": "cache",
+      "type": "http",
+      "label": "api_to_cache",
+      "description": "API uses Redis for caching and session storage",
+      "confidence": 0.75
+    },
+    {
+      "source": "api",
+      "target": "cache",
+      "type": "http",
+      "label": "api_to_queue",
+      "description": "API enqueues jobs to Redis/RQ",
+      "confidence": 0.8
+    },
+    {
+      "source": "cache",
+      "target": "worker",
+      "type": "http",
+      "label": "worker_from_queue",
+      "description": "Worker picks up jobs from Redis queue",
+      "confidence": 0.8
+    },
+    {
+      "source": "worker",
+      "target": "database",
+      "type": "http",
+      "label": "worker_to_database",
+      "description": "Worker queries database for job processing",
+      "confidence": 0.7
+    },
+    {
+      "source": "frontend",
+      "target": "api",
+      "type": "http",
+      "label": "frontend_to_api",
+      "description": "Frontend makes HTTP API requests",
+      "confidence": 0.85
+    },
+    {
+      "source": "whatsapp_api",
+      "target": "api",
+      "type": "http",
+      "label": "whatsapp_to_api",
+      "description": "WhatsApp Cloud API sends webhooks to API",
+      "confidence": 0.85
+    }
+  ],
+  "assumptions": [
+    "API likely uses database for persistent storage",
+    "Background jobs likely use Redis queue",
+    "Multi-tenant architecture detected from README",
+    "WhatsApp Cloud API integration for messaging"
+  ],
+  "uncertainties": [
+    "No containerization detected - deployment approach unclear",
+    "No .env.example found - configuration management unclear"
+  ],
+  "open_questions": [
+    "What is the tenant isolation strategy (schema-level, database-level, or host-based)?",
+    "How are WhatsApp webhooks authenticated and rate-limited?",
+    "What is the database migration strategy?",
+    "How is the application containerized for deployment?",
+    "What is the deployment target (bare metal, k8s, serverless)?",
+    "How is multi-tenancy implemented (database, schema, or code-level)?",
+    "What environment variables are required for deployment?",
+    "What secrets need to be managed (API keys, database credentials)?",
+    "How are workers scaled (horizontal pod autoscaling, number of replicas)?",
+    "What happens when a job fails - retry policy?"
+  ]
+}

@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "likely_public_services": [
+    "api",
+    "frontend"
+  ],
+  "likely_stateful_services": [
+    "database",
+    "cache",
+    "Redis"
+  ],
+  "likely_async_processing": [
+    "worker"
+  ],
+  "likely_external_services": [
+    {
+      "name": "whatsapp_api",
+      "type": "external_integration"
+    },
+    {
+      "name": "payment_gateway",
+      "type": "external_integration"
+    },
+    {
+      "name": "Whatsapp",
+      "type": "cloud_service"
+    },
+    {
+      "name": "Stripe",
+      "type": "cloud_service"
+    },
+    {
+      "name": "Sendgrid",
+      "type": "cloud_service"
+    }
+  ],
+  "likely_file_storage": [],
+  "likely_secrets": [
+    {
+      "category": "database",
+      "examples": [
+        "DB_HOST",
+        "DB_PASSWORD",
+        "DB_USER"
+      ]
+    },
+    {
+      "category": "authentication",
+      "examples": [
+        "API keys",
+        "OAuth tokens",
+        "JWT secrets"
+      ]
+    },
+    {
+      "category": "database",
+      "examples": [
+        "DB_HOST",
+        "DB_PASSWORD",
+        "DB_USER"
+      ]
+    }
+  ],
+  "scaling_sensitive_components": [
+    {
+      "component": "api",
+      "reason": "API handles HTTP traffic - consider horizontal scaling and load balancing"
+    },
+    {
+      "component": "worker",
+      "reason": "Worker processes - can scale horizontally for throughput"
+    },
+    {
+      "component": "database",
+      "reason": "Database requires persistent storage and careful scaling strategy"
+    },
+    {
+      "component": "cache",
+      "reason": "Cache service - consider Redis Cluster or Sentinel for HA"
+    }
+  ],
+  "scaling_guidance": {
+    "database": "Detected databases: PostgreSQL, PostgreSQL",
+    "async_jobs": "Background processing: worker",
+    "worker_scaling": "Workers can scale independently from API - consider HPA based on queue depth",
+    "stateful_services": "Stateful services require careful HA setup - consider managed databases",
+    "external_integrations": "External services: whatsapp_api, payment_gateway, Whatsapp, Stripe, Sendgrid"
+  },
+  "notes": [
+    "Public services: api, frontend",
+    "Stateful services: database, cache, Redis",
+    "Async processing: worker - consider monitoring queue depth",
+    "External integrations: whatsapp_api, payment_gateway, Whatsapp, Stripe, Sendgrid",
+    "Limited containerization - may need manual deployment setup",
+    "Key assumptions: API likely uses database for persistent storage"
+  ]
+}

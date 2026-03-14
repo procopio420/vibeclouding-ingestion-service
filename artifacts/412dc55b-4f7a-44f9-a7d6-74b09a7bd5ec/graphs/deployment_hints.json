@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "likely_public_services": [
+    "application"
+  ],
+  "likely_stateful_services": [],
+  "likely_async_processing": [],
+  "likely_file_storage": [],
+  "likely_secrets": [],
+  "scaling_guidance": {},
+  "notes": [
+    "No obvious stateful services detected",
+    "Limited infrastructure detected - may need manual deployment setup"
+  ]
+}

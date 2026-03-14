@@ -1,0 +1,64 @@
+version: "3.9"
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: vibe
+      POSTGRES_PASSWORD: vibe
+      POSTGRES_DB: vibe_context
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  api:
+    build: .
+    depends_on:
+      - db
+      - redis
+    environment:
+      - DATABASE_URL=postgresql://vibe:vibe@db:5432/vibe_context
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - STORAGE_BACKEND=r2
+      # R2 Storage Configuration
+      - R2_BUCKET=artifacts
+      - R2_ACCESS_KEY=${R2_ACCESS_KEY:-your_r2_access_key}
+      - R2_SECRET_KEY=${R2_SECRET_KEY:-your_r2_secret_key}
+      - R2_ENDPOINT=${R2_ENDPOINT:-https://your-account.r2.cloudflarestorage.com}
+      - R2_REGION=auto
+      # Analysis (run local only, no LLM)
+      - ANALYSIS_MODE=local_only
+      - LLM_PROVIDER=none
+      # Use PORT for Railway compatibility
+      - PORT=${PORT:-8000}
+    ports:
+      - "${PORT:-8000}:${PORT:-8000}"
+    volumes:
+      - .:/app
+
+  celery:
+    build: .
+    depends_on:
+      - api
+      - redis
+    command: celery -A app.celery_app worker --loglevel=info -Q repo_ingest
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      # R2 Storage Configuration
+      - STORAGE_BACKEND=r2
+      - R2_BUCKET=artifacts
+      - R2_ACCESS_KEY=${R2_ACCESS_KEY:-your_r2_access_key}
+      - R2_SECRET_KEY=${R2_SECRET_KEY:-your_r2_secret_key}
+      - R2_ENDPOINT=${R2_ENDPOINT:-https://your-account.r2.cloudflarestorage.com}
+      - R2_REGION=auto
+    volumes:
+      - .:/app
+
+volumes:
+  db_data:

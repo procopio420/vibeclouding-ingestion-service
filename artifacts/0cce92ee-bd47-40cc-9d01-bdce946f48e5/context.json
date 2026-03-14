@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "project_name": "orcazap",
+  "summary": "[API] WhatsApp-first quoting assistant for Brazilian construction material stores. Automates quote generation, pricing, and approval workflows via WhatsApp Cloud API.",
+  "input_sources": [
+    {
+      "id": "repo",
+      "type": "repo",
+      "source": "local",
+      "metadata": {
+        "structure": {},
+        "project_type": "api"
+      }
+    }
+  ],
+  "stack": {
+    "languages": [
+      "Python"
+    ],
+    "frameworks": [
+      "Redis",
+      "httpx",
+      "SQLAlchemy",
+      "FastAPI",
+      "pytest",
+      "Pydantic",
+      "Alembic"
+    ],
+    "databases": [],
+    "infrastructure": [],
+    "external_services": []
+  },
+  "components": [
+    {
+      "name": "application",
+      "type": "service",
+      "description": "Main application",
+      "responsibilities": [],
+      "tech": [],
+      "depends_on": [],
+      "exposes": [],
+      "consumes": []
+    }
+  ],
+  "flows": [],
+  "dependencies": [
+    {
+      "name": "alembic",
+      "type": "python-package",
+      "role": "runtime",
+      "confidence": 0.8
+    },
+    {
+      "name": "uvicorn[standard]",
+      "type": "python-package",
+      "role": "runtime",
+      "confidence": 0.8
+    },
+    {
+      "name": "passlib[bcrypt]",
+      "type": "python-package",
+      "role": "runtime",
+      "confidence": 0.8
+    },
+    {
+      "name": "jinja2",
+      "type": "python-package",
+      "role": "runtime",
+      "confidence": 0.8
+    },
+    {
+      "name": "mypy",
+      "type": "python-package",
+      "role": "runtime",
+      "confidence": 0.8
+    },
+    {
+      "name": "responses",
+      "type": "python-package",
+      "role": "runtime",
+      "confidence": 0.8
+    },
+    {
+      "name": "rq",
+      "type": "python-package",
+      "role": "runtime",
+      "confidence": 0.8
+    },
+    {
+      "name": "pydantic",
+      "type": "python-package",
+      "role": "runtime",
+      "confidence": 0.8
+    },
+    {
+      "name": "python-multipart",
+      "type": "python-package",
+      "role": "runtime",
+      "confidence": 0.8
+    },
+    {
+      "name": "redis",
+      "type": "python-package",
+      "role": "runtime",
+      "confidence": 0.8
+    }
+  ],
+  "assumptions": [],
+  "open_questions": [
+    "No .env.example found - what environment variables are needed?"
+  ],
+  "uncertainties": [],
+  "artifacts": [],
+  "created_at": null,
+  "updated_at": null
+}
