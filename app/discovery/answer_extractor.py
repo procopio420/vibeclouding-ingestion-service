@@ -73,76 +73,104 @@ class AnswerExtractor:
             
             checklist_text = "\n".join(checklist_summary)
             
-            prompt = f"""Você é um extrator estruturado de respostas para uma conversa de descoberta de software.
+            # Simplified prompt - less complex to reduce JSON errors
+            prompt = f"""Extrator de respostas para descoberta de software.
 
-IMPORTANTE: Responda SEMPRE em português brasileiro (pt-BR) para as instruções e contexto.
+Responda APENAS com JSON válido.
 
-CURRENT CHECKLIST (itens ainda faltando):
-{checklist_text}
+Checklist: {checklist_text}
 
-MENSAGEM DO USUÁRIO:
-"{user_message}"
+Mensagem: "{user_message}"
 
-Sua tarefa é extrair quais itens do checklist foram abordados pela mensagem do usuário.
-
-Para cada item que o usuário forneceu informação, responda com JSON:
+Resposta:
 {{
   "updates": [
-    {{
-      "key": "checklist_key",
-      "status": "confirmed" ou "inferred",
-      "value": "resposta completa do usuário sobre este tópico (1-2 frases)",
-      "confidence": 0.0-1.0,
-      "evidence": "citação breve ou contexto da mensagem do usuário"
-    }}
+    {{"key": "...", "status": "confirmed|inferred", "value": "...", "confidence": 0.0, "evidence": "..."}}
   ]
 }}
 
 Regras:
-- status "confirmed" = usuário mencionou explicitamente este tópico
-- status "inferred" = usuário暗示ou este tópico sem mencionar explicitamente
-- Extraia project_name SOMENTE se o usuário nomeou explicitamente seu projeto (ex: "é chamado de X", "nome do projeto é X")
-- NÃO infira project_name de descrições de produto como "software de gestão..."
-- NÃO infira repo_exists de texto vago - apenas quando o usuário confirmar explicitamente ou fornecer URL
-- Inclua apenas itens que foram realmente abordados na mensagem do usuário
-- Se nada foi abordado, retorne array updates vazia
-- Seja específico no value - capture o que o usuário realmente disse
-- confidence: 0.9+ para menções explícitas, 0.6-0.8 para inferências fortes, 0.3-0.5 para inferências fracas
-
-Responda ONLY com JSON válido, sem explicação."""
+- confirmed: mencionou explicitamente
+- inferred:暗示ou
+- Só extraia se o usuário abordar o tema
+- confidence: 0.9+ explícito, 0.6-0.8 inferência
+- JSON apenas, sem texto adicional."""
 
             response = analyzer.generate_chat_response(prompt)
             
             if not response:
                 return None
             
-            # Parse JSON from response
-            try:
-                response = response.strip()
-                if "```json" in response:
-                    response = response.split("```json")[1].split("```")[0]
-                elif "```" in response:
-                    response = response.split("```")[1].split("```")[0]
-                
-                result = json.loads(response.strip())
-                
-                if not isinstance(result, dict):
-                    return None
-                    
-                updates = result.get("updates", [])
-                answered_keys = [u.get("key") for u in updates if u.get("key")]
-                
-                return {
-                    "updates": updates,
-                    "answered_keys": answered_keys,
-                    "conflicts": [],
-                    "remaining_gaps": [k for k in checklist if k.get("status") == "missing" and k.get("key") not in answered_keys],
-                    "next_best_question_key": answered_keys[0] if answered_keys else None,
-                }
-                
-            except (json.JSONDecodeError, AttributeError) as e:
-                logger.warning(f"[AnswerExtractor] Failed to parse Gemini response: {e}")
-                return None
+            # Robust JSON parsing with multiple fallbacks
+            result = self._parse_json_response(response, checklist)
+            if result:
+                return result
+            
+            # If all parsing fails, return None to trigger heuristic fallback
+            logger.warning("[AnswerExtractor] Gemini parsing failed, using heuristic fallback")
+            return None
+    
+    def _parse_json_response(self, response: str, checklist: List[Dict]) -> Optional[Dict[str, Any]]:
+        """Parse JSON from Gemini response with robust fallbacks."""
+        import re
+        
+        # Try 1: Direct parse
+        try:
+            result = json.loads(response.strip())
+            if isinstance(result, dict) and "updates" in result:
+                return self._normalize_extraction_result(result, checklist)
+        except json.JSONDecodeError:
+            pass
+        
+        # Try 2: Extract from ```json blocks
+        try:
+            if "```json" in response:
+                response = response.split("```json")[1].split("```")[0]
+            elif "```" in response:
+                response = response.split("```")[1].split("```")[0]
+            result = json.loads(response.strip())
+            if isinstance(result, dict) and "updates" in result:
+                return self._normalize_extraction_result(result, checklist)
+        except (json.JSONDecodeError, IndexError):
+            pass
+        
+        # Try 3: Extract JSON object using regex
+        try:
+            json_match = re.search(r'\{[^{}]*"updates"[^{}]*\}', response, re.DOTALL)
+            if json_match:
+                result = json.loads(json_match.group(0))
+                if isinstance(result, dict) and "updates" in result:
+                    return self._normalize_extraction_result(result, checklist)
+        except (json.JSONDecodeError, AttributeError):
+            pass
+        
+        # Try 4: Find first { and last } and try to parse
+        try:
+            start = response.find('{')
+            end = response.rfind('}')
+            if start != -1 and end != -1 and end > start:
+                json_str = response[start:end+1]
+                result = json.loads(json_str)
+                if isinstance(result, dict) and "updates" in result:
+                    return self._normalize_extraction_result(result, checklist)
+        except (json.JSONDecodeError, AttributeError):
+            pass
+        
+        # All attempts failed
+        return None
+    
+    def _normalize_extraction_result(self, result: Dict, checklist: List[Dict]) -> Dict[str, Any]:
+        """Normalize extraction result to standard format."""
+        updates = result.get("updates", [])
+        answered_keys = [u.get("key") for u in updates if u.get("key")]
+        
+        return {
+            "updates": updates,
+            "answered_keys": answered_keys,
+            "conflicts": [],
+            "remaining_gaps": [k.get("key") for k in checklist if k.get("status") == "missing" and k.get("key") not in answered_keys],
+            "next_best_question_key": answered_keys[0] if answered_keys else None,
+        }
                 
         except Exception as e:
             logger.warning(f"[AnswerExtractor] Gemini extraction error: {e}")

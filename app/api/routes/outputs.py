@@ -1,13 +1,17 @@
 from fastapi import APIRouter, HTTPException
 from typing import Dict, Any
 import json
+import logging
 
 from app.serializers.markdown_serializer import render_all as render_markdown_skeleton
 from app.adapters import get_storage_adapter
 from pathlib import Path
 from app.pipelines.graph_pipeline import generate_graph_artifacts
 from app.discovery.checklist_service import ChecklistService
+from app.discovery.config import NEXT_STEP_DESCRIPTIONS_PT
 from app.services.context_aggregator import get_consolidated_context
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -83,29 +87,125 @@ def _compute_next_best_step(project_id: str, context: Dict[str, Any]):
         return None
 
 
+def _build_default_context(project_id: str) -> Dict[str, Any]:
+    """Build stable default context for new projects without consolidated context."""
+    try:
+        from app.discovery.checklist_service import ChecklistService
+        from app.discovery.readiness_service import DiscoveryReadinessService
+        
+        # Try to get real state from DB if available
+        cs = ChecklistService()
+        checklist = cs.get_checklist(project_id)
+        
+        rs = DiscoveryReadinessService()
+        readiness = rs.quick_readiness_check(project_id, checklist)
+        
+        # Build summary from checklist
+        items = []
+        for it in checklist:
+            status = it.get("status")
+            if status in ("confirmed", "inferred"):
+                value = it.get("value") or it.get("evidence") or status
+                items.append({
+                    "key": it.get("key"),
+                    "label": it.get("label"),
+                    "value": value,
+                    "source": status,
+                })
+        
+        understanding_summary = {"items": items}
+        
+        # Compute next step if we have answers
+        next_best_step = None
+        if items:
+            try:
+                from app.discovery.lifecycle_repository import DiscoveryQuestionLifecycleRepository
+                life_repo = DiscoveryQuestionLifecycleRepository(project_id)
+                state = life_repo.get_state()
+                answered_keys = [row.get("intent_key") for row in state if row.get("status") == "answered"]
+                
+                # Find first missing high priority item
+                for item in checklist:
+                    if item.get("status") == "missing" and item.get("priority") == "high":
+                        if item.get("key") not in answered_keys:
+                            from app.discovery.question_intents import QUESTION_INTENTS
+                            from app.discovery.config import NEXT_STEP_DESCRIPTIONS_PT
+                            item_key = item.get("key")
+                            if item_key:
+                                for intent, meta in QUESTION_INTENTS.items():
+                                    if meta.get("checklist_key") == item_key:
+                                        next_best_step = {
+                                            "title": meta.get("question"),
+                                            "description": NEXT_STEP_DESCRIPTIONS_PT.get(item_key, ""),
+                                            "type": "repo" if item_key == "repo_exists" else "clarification"
+                                        }
+                                        break
+                            break
+            except Exception:
+                pass
+        
+        return {
+            "project": {"project_id": project_id, "project_name": ""},
+            "overview": {},
+            "stack": [],
+            "components": [],
+            "dependencies": [],
+            "flows": [],
+            "assumptions": [],
+            "open_questions": [],
+            "uncertainties": [],
+            "graphs": {},
+            "readiness": readiness,
+            "understanding_summary": understanding_summary,
+            "next_best_step": next_best_step,
+        }
+    except Exception as e:
+        # Return minimal fallback if even DB queries fail
+        logger.warning(f"[Context] Failed to build default context: {e}")
+        return {
+            "project": {"project_id": project_id, "project_name": ""},
+            "overview": {},
+            "stack": [],
+            "components": [],
+            "dependencies": [],
+            "flows": [],
+            "assumptions": [],
+            "open_questions": [],
+            "uncertainties": [],
+            "graphs": {},
+            "readiness": {"status": "not_ready", "coverage": 0.0},
+            "understanding_summary": {"items": []},
+            "next_best_step": None,
+        }
+
+
 @router.get("/projects/{project_id}/context")
 async def get_context(project_id: str) -> Dict[str, Any]:
     try:
         context = get_consolidated_context(project_id)
-        # Enrich with additional discovery metadata for stable, richer UI
-        try:
-            understanding_summary = _build_understanding_summary(project_id)
-            context["understanding_summary"] = understanding_summary
-        except Exception:
-            context["understanding_summary"] = {"items": []}
-
-        try:
-            next_best_step = _compute_next_best_step(project_id, context)
-            if next_best_step:
-                context["next_best_step"] = next_best_step
-        except Exception:
-            context["next_best_step"] = None
-
-        return context
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"No context found for project {project_id}")
+        # Build stable default context from DB state
+        logger.info(f"[Context] No consolidated context for {project_id}, building from DB state")
+        context = _build_default_context(project_id)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error loading context: {str(e)}")
+        logger.warning(f"[Context] Error loading consolidated context: {e}, building defaults")
+        context = _build_default_context(project_id)
+    
+    # Enrich with additional discovery metadata
+    try:
+        understanding_summary = _build_understanding_summary(project_id)
+        context["understanding_summary"] = understanding_summary
+    except Exception:
+        context["understanding_summary"] = {"items": []}
+
+    try:
+        next_best_step = _compute_next_best_step(project_id, context)
+        if next_best_step:
+            context["next_best_step"] = next_best_step
+    except Exception:
+        context["next_best_step"] = None
+
+    return context
 
 
 @router.get("/projects/{project_id}/markdown/{filename}")
