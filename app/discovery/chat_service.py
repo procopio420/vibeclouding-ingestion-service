@@ -130,8 +130,28 @@ class ChatService:
             if match:
                 url = match.group(0)
                 if url.endswith('.git'):
-                    return url[:-4]
-                return url
+                    url = url[:-4]
+                normalized = self.normalize_github_repo_url(url)
+                return normalized
+        return None
+
+    @staticmethod
+    def normalize_github_repo_url(raw: str) -> Optional[str]:
+        """Normalize and minimally validate to a GitHub https URL. Returns None if invalid."""
+        if not raw or not raw.strip():
+            return None
+        raw = raw.strip()
+        # Already https?://github.com/...
+        if raw.startswith("https://github.com/") or raw.startswith("http://github.com/"):
+            rest = raw.split("github.com/", 1)[-1].strip().rstrip("/")
+            if rest and "/" in rest:
+                return f"https://github.com/{rest}"
+            return f"https://github.com/{rest}" if rest else None
+        # git@github.com:owner/repo
+        if raw.startswith("git@github.com:"):
+            path = raw.replace("git@github.com:", "", 1).strip().rstrip("/")
+            if path and "/" in path:
+                return f"https://github.com/{path}"
         return None
     
     def extract_checklist_updates(self, message: str, checklist_items: List[Dict]) -> Dict[str, Any]:

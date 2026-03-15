@@ -5,7 +5,7 @@ from unittest.mock import patch, MagicMock
 from datetime import datetime
 
 from app.services.architecture_trigger_service import ArchitectureTriggerService
-from app.db import get_session, DiscoverySessionModel, ProjectModel
+from app.db import get_session, DiscoverySessionModel, ProjectModel, ChecklistItemModel
 
 
 class TestArchitectureTriggerService:
@@ -43,6 +43,9 @@ class TestArchitectureTriggerService:
 
             yield project_id, session_id
 
+            session.query(ChecklistItemModel).filter(
+                ChecklistItemModel.project_id == project_id
+            ).delete()
             session.query(DiscoverySessionModel).filter(
                 DiscoverySessionModel.project_id == project_id
             ).delete()
@@ -53,14 +56,34 @@ class TestArchitectureTriggerService:
         finally:
             session.close()
 
+    def _add_repo_url(self, project_id: str, repo_url: str = "https://github.com/example/repo") -> None:
+        """Add repo_exists checklist item so get_repo_url_for_panel returns the URL."""
+        session = get_session()
+        try:
+            item = ChecklistItemModel(
+                id=str(uuid.uuid4()),
+                project_id=project_id,
+                key="repo_exists",
+                label="Repo",
+                status="confirmed",
+                priority="high",
+                value=repo_url,
+                updated_at=datetime.utcnow(),
+            )
+            session.add(item)
+            session.commit()
+        finally:
+            session.close()
+
     def test_is_eligible_not_ready(self, setup_project_and_session):
         """Test that project not ready for architecture returns False."""
         project_id, _ = setup_project_and_session
         assert ArchitectureTriggerService.is_eligible(project_id) is False
 
     def test_is_eligible_ready_for_architecture(self, setup_project_and_session):
-        """Test that project ready for architecture returns True."""
+        """Test that project ready for architecture with repo returns True."""
         project_id, _ = setup_project_and_session
+        self._add_repo_url(project_id)
 
         session = get_session()
         try:
@@ -77,6 +100,7 @@ class TestArchitectureTriggerService:
     def test_is_eligible_already_triggered(self, setup_project_and_session):
         """Test that already triggered project returns False."""
         project_id, _ = setup_project_and_session
+        self._add_repo_url(project_id)
 
         session = get_session()
         try:
@@ -95,10 +119,28 @@ class TestArchitectureTriggerService:
         """Test that non-existent project returns False."""
         assert ArchitectureTriggerService.is_eligible("non-existent-id") is False
 
+    def test_is_eligible_maybe_ready_with_repo(self, setup_project_and_session):
+        """Test that maybe_ready with repo URL returns True."""
+        project_id, _ = setup_project_and_session
+        self._add_repo_url(project_id)
+
+        session = get_session()
+        try:
+            discovery_session = session.query(DiscoverySessionModel).filter(
+                DiscoverySessionModel.project_id == project_id
+            ).first()
+            discovery_session.readiness_status = "maybe_ready"
+            session.commit()
+        finally:
+            session.close()
+
+        assert ArchitectureTriggerService.is_eligible(project_id) is True
+
     @patch('app.services.architecture_trigger_service.requests.post')
     def test_trigger_sends_webhook(self, mock_post, setup_project_and_session):
         """Test that trigger sends webhook successfully."""
         project_id, _ = setup_project_and_session
+        self._add_repo_url(project_id)
 
         session = get_session()
         try:
@@ -119,11 +161,18 @@ class TestArchitectureTriggerService:
 
         assert result["success"] is True
         mock_post.assert_called_once()
+        call_payload = mock_post.call_args[1]["json"]
+        assert call_payload.get("event_type") == "project.architecture.requested"
+        assert call_payload.get("project_id") == project_id
+        assert "occurred_at" in call_payload
+        assert "context_url" in call_payload
+        assert call_payload.get("repo_url") == "https://github.com/example/repo"
 
     @patch('app.services.architecture_trigger_service.requests.post')
     def test_trigger_idempotent(self, mock_post, setup_project_and_session):
         """Test that trigger is idempotent - doesn't send twice."""
         project_id, _ = setup_project_and_session
+        self._add_repo_url(project_id)
 
         session = get_session()
         try:
@@ -147,6 +196,7 @@ class TestArchitectureTriggerService:
     def test_trigger_updates_db_fields(self, mock_post, setup_project_and_session):
         """Test that trigger updates DB fields correctly."""
         project_id, _ = setup_project_and_session
+        self._add_repo_url(project_id)
 
         session = get_session()
         try:
@@ -174,6 +224,8 @@ class TestArchitectureTriggerService:
             assert discovery_session.eligible_for_architecture is True
             assert discovery_session.architecture_trigger_status == "success"
             assert discovery_session.architecture_triggered_at is not None
+            assert discovery_session.architecture_trigger_target is not None
+            assert discovery_session.architecture_started_by == "manual_button"
         finally:
             session.close()
 
@@ -181,6 +233,7 @@ class TestArchitectureTriggerService:
     def test_trigger_handles_webhook_failure(self, mock_post, setup_project_and_session):
         """Test that trigger handles webhook failure gracefully."""
         project_id, _ = setup_project_and_session
+        self._add_repo_url(project_id)
 
         session = get_session()
         try:

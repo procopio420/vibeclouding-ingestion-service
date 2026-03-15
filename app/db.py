@@ -82,6 +82,8 @@ class DiscoverySessionModel(Base):
     architecture_triggered = Column(Boolean, default=False)
     architecture_triggered_at = Column(DateTime, nullable=True)
     architecture_trigger_status = Column(String(50), nullable=True)
+    architecture_trigger_target = Column(String(512), nullable=True)
+    architecture_started_by = Column(String(50), nullable=True)
     # Answer sufficiency: stay on topic until resolved
     current_focus_key = Column(String(100), nullable=True, index=True)
     focus_attempt_count = Column(Integer, default=0)

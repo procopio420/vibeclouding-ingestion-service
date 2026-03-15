@@ -152,6 +152,17 @@ class AssistantRunner:
                     "next_best_step": result.get("next_best_step"),
                 }
             )
+            # Emit project.repo.updated when repo URL was detected and persisted
+            repo_url_detected = result.get("repo_url_detected")
+            if repo_url_detected and isinstance(repo_url_detected, str) and repo_url_detected.strip():
+                yield StreamEvent(
+                    ServerEventType.PROJECT_REPO_UPDATED,
+                    {
+                        "project_id": project_id,
+                        "repo_url": repo_url_detected.strip(),
+                        "has_repo_url": True,
+                    }
+                )
             # Emit session.state_changed when discovery state transitioned
             state_transition = result.get("state_transition")
             if state_transition:

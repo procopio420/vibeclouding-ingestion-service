@@ -1,19 +1,20 @@
 """Architecture trigger service for discovery-to-architecture phase transition."""
 import logging
 import os
-import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
 
 import requests
 
 from app.db import get_session, DiscoverySessionModel, ProjectModel
+from app.services.context_aggregator import get_repo_url_for_panel
+from app.repositories.architecture_result_repo import ArchitectureResultRepository
 
 logger = logging.getLogger(__name__)
 
 ARCHITECTURE_WEBHOOK_URL = os.environ.get(
     "ARCHITECTURE_WEBHOOK_URL",
-    "http://boccaletti.vps-kinghost.net:5678/webhook-test/vibe-arch-input"
+    "https://boccaletti.vps-kinghost.net:5678/webhook-test/vibe-arch-input"
 )
 
 
@@ -22,7 +23,11 @@ class ArchitectureTriggerService:
 
     @staticmethod
     def is_eligible(project_id: str) -> bool:
-        """Check if project is eligible for architecture trigger."""
+        """Check if project is eligible for architecture trigger.
+
+        Requires: readiness in (maybe_ready, ready_for_architecture), repo_url exists,
+        architecture not already triggered, no architecture result yet.
+        """
         session = get_session()
         try:
             discovery_session = session.query(DiscoverySessionModel).filter(
@@ -37,8 +42,19 @@ class ArchitectureTriggerService:
                 logger.info(f"Architecture already triggered for project {project_id}")
                 return False
 
-            if discovery_session.readiness_status != "ready_for_architecture":
-                logger.info(f"Project {project_id} not ready for architecture (readiness: {discovery_session.readiness_status})")
+            if discovery_session.readiness_status not in ("maybe_ready", "ready_for_architecture"):
+                logger.info(
+                    f"Project {project_id} not ready for architecture (readiness: {discovery_session.readiness_status})"
+                )
+                return False
+
+            repo_url, has_repo_url = get_repo_url_for_panel(project_id)
+            if not has_repo_url or not repo_url:
+                logger.info(f"Project {project_id} has no linked repo URL")
+                return False
+
+            if ArchitectureResultRepository().get_latest(project_id) is not None:
+                logger.info(f"Project {project_id} already has an architecture result")
                 return False
 
             return True
@@ -48,7 +64,7 @@ class ArchitectureTriggerService:
 
     @staticmethod
     def trigger(project_id: str) -> Dict[str, Any]:
-        """Trigger architecture phase for a project."""
+        """Trigger architecture phase for a project (manual start)."""
         session = get_session()
         try:
             discovery_session = session.query(DiscoverySessionModel).filter(
@@ -56,37 +72,42 @@ class ArchitectureTriggerService:
             ).first()
 
             if not discovery_session:
-                logger.warning(f"No discovery session found for project {project_id}")
                 return {"success": False, "error": "No discovery session found"}
 
             if discovery_session.architecture_triggered:
-                logger.info(f"Architecture already triggered for project {project_id}")
                 return {"success": False, "error": "Already triggered", "skipped": True}
 
-            if discovery_session.readiness_status != "ready_for_architecture":
-                logger.warning(f"Project {project_id} not ready for architecture")
+            if discovery_session.readiness_status not in ("maybe_ready", "ready_for_architecture"):
                 return {"success": False, "error": "Not ready for architecture"}
 
-            project = session.query(ProjectModel).filter(ProjectModel.id == project_id).first()
-            project_name = project.name if project else "Unknown"
+            repo_url, has_repo_url = get_repo_url_for_panel(project_id)
+            if not has_repo_url or not repo_url:
+                return {"success": False, "error": "Repo missing"}
 
+            if ArchitectureResultRepository().get_latest(project_id) is not None:
+                return {"success": False, "error": "Architecture result already exists", "skipped": True}
+
+            base_url = os.environ.get("BASE_URL", "").strip() or "http://localhost:8000"
+            context_url = f"{base_url}/projects/{project_id}/context"
+            now = datetime.utcnow()
             webhook_payload = {
+                "event_type": "project.architecture.requested",
                 "project_id": project_id,
-                "project_name": project_name,
-                "triggered_at": datetime.utcnow().isoformat(),
-                "trigger_id": str(uuid.uuid4()),
-                "readiness_status": discovery_session.readiness_status,
+                "occurred_at": now.isoformat(),
+                "context_url": context_url,
+                "repo_url": repo_url,
             }
 
+            webhook_url = ARCHITECTURE_WEBHOOK_URL
             result = ArchitectureTriggerService._send_webhook(webhook_payload)
 
-            now = datetime.utcnow()
             discovery_session.architecture_triggered = result.get("success", False)
             discovery_session.architecture_triggered_at = now if result.get("success") else None
             discovery_session.architecture_trigger_status = "success" if result.get("success") else "failed"
             discovery_session.eligible_for_architecture = True
-
             if result.get("success"):
+                discovery_session.architecture_trigger_target = webhook_url
+                discovery_session.architecture_started_by = "manual_button"
                 discovery_session.updated_at = now
                 logger.info(f"Successfully triggered architecture for project {project_id}")
 

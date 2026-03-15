@@ -31,6 +31,7 @@ class ServerEventType(str, Enum):
     QUESTION_ANSWERED = "question.answered"
     RUN_STATUS = "run.status"
     DISCOVERY_PANEL_UPDATED = "discovery.panel_updated"
+    PROJECT_REPO_UPDATED = "project.repo.updated"
     ERROR = "error"
     PONG = "pong"
 

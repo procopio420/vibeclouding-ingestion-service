@@ -2,11 +2,13 @@
 import json
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.readiness import compute_readiness
 
 logger = logging.getLogger(__name__)
+
+REPO_ABSENT_VALUE = "absent"
 
 CONSOLIDATED_PATH = "{project_id}/output/consolidated_context.json"
 
@@ -296,6 +298,18 @@ def _get_repo_url_from_db(project_id: str) -> str:
     except Exception as e:
         logger.warning(f"Could not get repo_url from DB: {e}")
         return ""
+
+
+def get_repo_url_for_panel(project_id: str) -> Tuple[Optional[str], bool]:
+    """Get repo URL for the repo panel. Treats absent/empty as missing.
+
+    Returns:
+        (repo_url or None, has_repo_url)
+    """
+    raw = _get_repo_url_from_db(project_id)
+    if not raw or raw.strip() == "" or raw.strip() == REPO_ABSENT_VALUE:
+        return None, False
+    return raw.strip(), True
 
 
 def rebuild_context_from_db(project_id: str) -> Dict[str, Any]:

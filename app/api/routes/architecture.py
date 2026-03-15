@@ -5,16 +5,48 @@ import logging
 from fastapi import APIRouter, HTTPException
 
 from app.api.schemas import ArchitectureResultResponse
-from app.db import get_session, ProjectModel
+from app.db import get_session, DiscoverySessionModel, ProjectModel
 from app.repositories.architecture_result_repo import (
     ArchitectureResultRepository,
     parse_architecture_result,
 )
+from app.services.architecture_trigger_service import ArchitectureTriggerService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 repo = ArchitectureResultRepository()
+
+
+@router.post("/projects/{project_id}/start-architecture")
+async def start_architecture(project_id: str):
+    """Manually start the architecture phase for a project.
+
+    Requires: readiness in (maybe_ready, ready_for_architecture), repo linked,
+    architecture not already triggered, no architecture result yet.
+    Sends webhook to n8n and persists trigger state.
+    """
+    session = get_session()
+    try:
+        project = session.query(ProjectModel).filter(ProjectModel.id == project_id).first()
+        discovery_session = session.query(DiscoverySessionModel).filter(
+            DiscoverySessionModel.project_id == project_id
+        ).first()
+    finally:
+        session.close()
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if not discovery_session:
+        raise HTTPException(status_code=404, detail="Discovery session not found")
+
+    result = ArchitectureTriggerService.trigger(project_id)
+
+    if result.get("skipped") or not result.get("success"):
+        error = result.get("error", "Not eligible")
+        raise HTTPException(status_code=400, detail=error)
+
+    return {"success": True, "message": "Architecture started"}
 
 
 @router.post("/projects/{project_id}/architecture-result", response_model=ArchitectureResultResponse)
