@@ -7,7 +7,6 @@ import json
 from app.api.schemas import (
     IngestImageRequest,
     IngestTextRequest,
-    IngestRepoRequest,
     IngestDocumentRequest,
 )
 
@@ -30,24 +29,46 @@ async def ingest_text(project_id: str, payload: IngestTextRequest):
     return {"ingest_id": ingest_id, "status": "queued", "type": "text", "project_id": project_id}
 
 
+def _normalize_repo_payload(body: dict) -> list:
+    """Accept { repo_url } or { repos: [...] }, return list of (repo_url, reference)."""
+    if not body:
+        return []
+    if "repo_url" in body:
+        url = body.get("repo_url") or ""
+        ref = body.get("reference") or "main"
+        return [(str(url).strip(), ref)] if url else []
+    if "repos" in body and isinstance(body["repos"], list):
+        out = []
+        for r in body["repos"]:
+            if isinstance(r, dict) and r.get("repo_url"):
+                out.append((str(r["repo_url"]).strip(), r.get("reference") or "main"))
+            elif hasattr(r, "repo_url"):
+                out.append((str(r.repo_url).strip(), getattr(r, "reference", None) or "main"))
+        return out
+    return []
+
+
 @router.api_route("/projects/{project_id}/repo", methods=["POST", "PATCH"], response_model=dict)
-async def ingest_repo(project_id: str, payload: IngestRepoRequest):
+async def ingest_repo(project_id: str, payload: dict):
+    """Accept { "repo_url": "https://github.com/owner/repo" } or { "repos": [ { "repo_url", "reference" } ] }."""
     init_db()
     session = get_session()
-    
-    # Check if project exists
+
     project = session.query(ProjectModel).filter(ProjectModel.id == project_id).first()
     if not project:
         session.close()
         raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
-    
+
+    repos = _normalize_repo_payload(payload)
+    if not repos:
+        session.close()
+        raise HTTPException(status_code=400, detail="repo_url or repos is required")
+
     results = []
-    if not getattr(payload, 'repos', None):
-        raise HTTPException(status_code=400, detail="repos field is required")
-    for r in payload.repos:
-        log_event(logger, "repo_ingest_request", {"project_id": project_id, "repo_url": r.repo_url, "reference": r.reference})
+    for repo_url, reference in repos:
+        log_event(logger, "repo_ingest_request", {"project_id": project_id, "repo_url": repo_url, "reference": reference})
         job_id = str(uuid.uuid4())
-        payload_json = json.dumps({"repo_url": r.repo_url, "reference": r.reference})
+        payload_json = json.dumps({"repo_url": repo_url, "reference": reference})
         job = JobModel(
             id=job_id,
             project_id=project_id,
@@ -58,8 +79,7 @@ async def ingest_repo(project_id: str, payload: IngestRepoRequest):
         )
         session.add(job)
         session.commit()
-        # enqueue worker
-        celery_app.send_task("repo_ingest_worker", args=[job_id, project_id, r.repo_url, r.reference], queue="repo_ingest")
+        celery_app.send_task("repo_ingest_worker", args=[job_id, project_id, repo_url, reference], queue="repo_ingest")
         results.append({"job_id": job_id, "project_id": project_id, "job_type": "repo_ingest", "status": "queued"})
     session.close()
     return {"jobs": results}
