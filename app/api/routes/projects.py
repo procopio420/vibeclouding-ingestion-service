@@ -48,6 +48,26 @@ async def get_project(project_id: str):
     }
 
 
+@router.get("/projects")
+async def list_projects():
+    """Get all projects with their IDs."""
+    session = get_session()
+    projects = session.query(ProjectModel).order_by(ProjectModel.created_at.desc()).all()
+    session.close()
+    return {
+        "projects": [
+            {
+                "project_id": p.id,
+                "project_name": p.name,
+                "summary": p.summary,
+                "status": p.status,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+            }
+            for p in projects
+        ]
+    }
+
+
 @router.get("/projects/{project_id}/status")
 async def get_project_status(project_id: str):
     session = get_session()
