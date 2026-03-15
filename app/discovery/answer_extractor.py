@@ -112,6 +112,15 @@ class AnswerExtractor:
             logger.warning(f"[AnswerExtractor] Gemini extraction error: {e}")
             return None
 
+    def _extract_with_heuristics(
+        self,
+        user_message: str,
+        checklist: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Heuristic-based extraction as fallback."""
+        from app.discovery.answer_extraction_parser import _Heuristics
+        return _Heuristics.extract_with_heuristics(self, user_message, checklist)
+
 
 # Parser is now in separate module - kept for backwards compatibility
 from app.discovery.answer_extraction_parser import safe_parse_compact_response, normalize_compact_response
