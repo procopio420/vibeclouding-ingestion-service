@@ -216,7 +216,7 @@ Responda ONLY com JSON válido, sem explicação."""
         # This only triggers if NOT already detected a URL
         if "repo_exists" not in answered_keys:
             yes_patterns = [r'\byes\b', r'\byeah\b', r'\byep\b', r'\bsure\b', r'\bsim\b', r'\btenho\b', r'\btemos\b']
-            no_patterns = [r'\bno\b', r'\bnope\b', r'\bnão\b', r'\bnao\b', r'\bnot yet\b', r'\bainda não\b', r'\bdon'?t have\b']
+            no_patterns = [r'\bno\b', r'\bnope\b', r'\bnão\b', r'\bnao\b', r'\bnot yet\b', r'\bainda não\b', r"\bdon'?t have\b"]
             
             for pattern in yes_patterns:
                 if re.search(pattern, text):
