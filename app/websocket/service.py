@@ -125,9 +125,6 @@ class DiscoveryWebSocketService:
             orchestrator=self.orchestrator,
         ):
             await send_event(event.to_dict())
-            
-            if event.type == ServerEventType.ASSISTANT_MESSAGE_CREATED:
-                break
     
     async def handle_checklist_update(
         self,

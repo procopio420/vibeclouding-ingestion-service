@@ -127,6 +127,32 @@ class AssistantRunner:
                 }
             )
             
+            # Panel-update events so the right-side Discovery panel stays in sync
+            checklist = result.get("checklist") or []
+            completed = sum(1 for c in checklist if c.get("status") != "missing")
+            total = len(checklist)
+            percentage = (completed / total * 100) if total > 0 else 0
+            yield StreamEvent(
+                ServerEventType.CHECKLIST_PROGRESS,
+                {"completed": completed, "total": total, "percentage": percentage}
+            )
+            readiness = result.get("readiness") or {}
+            yield StreamEvent(
+                ServerEventType.READINESS_UPDATED,
+                {
+                    "status": readiness.get("status", "not_ready"),
+                    "coverage": readiness.get("coverage", 0),
+                    "missing": readiness.get("missing_critical_items", []),
+                }
+            )
+            yield StreamEvent(
+                ServerEventType.DISCOVERY_PANEL_UPDATED,
+                {
+                    "understanding_summary": result.get("understanding_summary") or {"items": []},
+                    "next_best_step": result.get("next_best_step"),
+                }
+            )
+            
             yield StreamEvent(
                 ServerEventType.RUN_STATUS,
                 {"run_id": run_id, "status": "completed"}

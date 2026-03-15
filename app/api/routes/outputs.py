@@ -205,6 +205,19 @@ async def get_context(project_id: str) -> Dict[str, Any]:
     except Exception:
         context["next_best_step"] = None
 
+    # Ensure readiness is fresh from DB when discovery session exists
+    try:
+        from app.discovery.session_service import DiscoverySessionService
+        from app.discovery.readiness_service import DiscoveryReadinessService
+        session_svc = DiscoverySessionService()
+        discovery_session = session_svc.get_session(project_id)
+        if discovery_session:
+            rs = DiscoveryReadinessService()
+            checklist = ChecklistService().get_checklist(project_id)
+            context["readiness"] = rs.quick_readiness_check(project_id, checklist, None)
+    except Exception as e:
+        logger.debug(f"[Context] Could not refresh readiness from discovery: {e}")
+
     return context
 
 
