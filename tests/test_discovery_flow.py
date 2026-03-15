@@ -338,5 +338,236 @@ class TestAnswerExtraction:
             assert "repo_exists" in updated, f"Failed to detect repo from: {message}"
 
 
+class TestProjectNameExtraction:
+    """Test suite for project name extraction."""
+    
+    def test_project_name_not_from_description(self):
+        """Generic product description should NOT become project_name.
+        
+        "software de gestão de uma fábrica" is product_goal, NOT project_name.
+        """
+        from app.discovery.answer_extractor import AnswerExtractor
+        
+        extractor = AnswerExtractor()
+        
+        # These are product descriptions, NOT project names
+        descriptions = [
+            "software de gestão de uma fábrica de artefatos de cimento",
+            "gestão de uma fábrica de concreto",
+            "managing a concrete factory",
+            "sistema para fabricar postes",
+        ]
+        
+        checklist = [
+            {"key": "project_name", "status": "missing", "priority": "high"},
+            {"key": "product_goal", "status": "missing", "priority": "high"},
+        ]
+        
+        for message in descriptions:
+            result = extractor._extract_with_heuristics(message, checklist)
+            updated = {u["key"]: u["status"] for u in result.get("updates", [])}
+            # project_name should NOT be updated from these
+            if "project_name" in updated:
+                assert updated["project_name"] != "confirmed", f"Description should not become project_name: {message}"
+    
+    def test_explicit_project_name_extraction(self):
+        """Explicit project name should be extracted correctly."""
+        from app.discovery.answer_extractor import AnswerExtractor
+        
+        extractor = AnswerExtractor()
+        
+        # These ARE explicit project names
+        explicit_names = [
+            "It's called Concreto Online",
+            "My project name is SmartBuild",
+            "O projeto se chama VendasPro",
+            "chama-se FabricaTech",
+        ]
+        
+        checklist = [
+            {"key": "project_name", "status": "missing", "priority": "high"},
+            {"key": "product_goal", "status": "missing", "priority": "high"},
+        ]
+        
+        for message in explicit_names:
+            result = extractor._extract_with_heuristics(message, checklist)
+            updated = {u["key"]: u["status"] for u in result.get("updates", [])}
+            # project_name should be confirmed
+            assert updated.get("project_name") == "confirmed", f"Should extract explicit name from: {message}"
+
+
+class TestRepoExplicitHandling:
+    """Test suite for explicit repo yes/no handling."""
+    
+    def test_repo_explicit_yes(self):
+        """Explicit yes to repo question should mark confirmed."""
+        from app.discovery.answer_extractor import AnswerExtractor
+        
+        extractor = AnswerExtractor()
+        
+        yes_responses = [
+            "yes",
+            "yeah",
+            "yep",
+            "sure",
+            "sim",
+            "tenho",
+            "Yes, I have a repo",
+            "yeah we have one",
+        ]
+        
+        checklist = [
+            {"key": "repo_exists", "status": "missing", "priority": "high"},
+        ]
+        
+        for message in yes_responses:
+            result = extractor._extract_with_heuristics(message, checklist)
+            updated = {u["key"]: u["status"] for u in result.get("updates", [])}
+            assert updated.get("repo_exists") == "confirmed", f"'yes' should mark repo confirmed: {message}"
+    
+    def test_repo_explicit_no(self):
+        """Explicit no should mark as missing (not inferred)."""
+        from app.discovery.answer_extractor import AnswerExtractor
+        
+        extractor = AnswerExtractor()
+        
+        no_responses = [
+            "no",
+            "nope",
+            "não",
+            "nao",
+            "not yet",
+            "ainda não",
+            "don't have one",
+            "I don't have a repo",
+        ]
+        
+        checklist = [
+            {"key": "repo_exists", "status": "missing", "priority": "high"},
+        ]
+        
+        for message in no_responses:
+            result = extractor._extract_with_heuristics(message, checklist)
+            updated = {u["key"]: u["status"] for u in result.get("updates", [])}
+            # Explicit no should mark as missing (not inferred)
+            assert updated.get("repo_exists") == "missing", f"'no' should mark repo as missing: {message}"
+    
+    def test_repo_not_inferred_from_vague_text(self):
+        """Repo should NOT be inferred from vague text like project description."""
+        from app.discovery.answer_extractor import AnswerExtractor
+        
+        extractor = AnswerExtractor()
+        
+        # These should NOT trigger repo detection
+        vague_messages = [
+            "software de gestão de uma fábrica",
+            "my project is about concrete",
+            "we make postes de concreto",
+            "gestão de estoque",
+        ]
+        
+        checklist = [
+            {"key": "repo_exists", "status": "missing", "priority": "high"},
+            {"key": "product_goal", "status": "missing", "priority": "high"},
+        ]
+        
+        for message in vague_messages:
+            result = extractor._extract_with_heuristics(message, checklist)
+            updated = {u["key"]: u["status"] for u in result.get("updates", [])}
+            # repo should NOT be updated from these
+            assert "repo_exists" not in updated, f"Vague text should not trigger repo: {message}"
+
+
+class TestEntryChannelsExtraction:
+    """Test suite for entry channels extraction."""
+    
+    def test_entry_channels_mobile(self):
+        """Mobile app answer should update entry_channels."""
+        from app.discovery.answer_extractor import AnswerExtractor
+        
+        extractor = AnswerExtractor()
+        
+        test_cases = [
+            "seria por mobile app",
+            "app móvil",
+            "celular",
+            "smartphone",
+            "via mobile",
+            "mobile application",
+            "ios and android",
+        ]
+        
+        checklist = [
+            {"key": "entry_channels", "status": "missing", "priority": "high"},
+        ]
+        
+        for message in test_cases:
+            result = extractor._extract_with_heuristics(message, checklist)
+            updated = [u["key"] for u in result.get("updates", [])]
+            assert "entry_channels" in updated, f"Should extract entry_channels from: {message}"
+    
+    def test_entry_channels_web(self):
+        """Web answer should update entry_channels."""
+        from app.discovery.answer_extractor import AnswerExtractor
+        
+        extractor = AnswerExtractor()
+        
+        test_cases = [
+            "tudo web mesmo",
+            "via navegador",
+            "website",
+            "via web",
+            "web application",
+            "navegador",
+        ]
+        
+        checklist = [
+            {"key": "entry_channels", "status": "missing", "priority": "high"},
+        ]
+        
+        for message in test_cases:
+            result = extractor._extract_with_heuristics(message, checklist)
+            updated = [u["key"] for u in result.get("updates", [])]
+            assert "entry_channels" in updated, f"Should extract entry_channels from: {message}"
+
+
+class TestReadinessMissingRepo:
+    """Test suite for readiness missing_required_repo flag."""
+    
+    def test_readiness_missing_repo_flag(self):
+        """Readiness should include missing_required_repo when repo is missing."""
+        from app.discovery.readiness_service import DiscoveryReadinessService
+        
+        service = DiscoveryReadinessService()
+        
+        # Checklist with missing repo
+        checklist = [
+            {"key": "repo_exists", "status": "missing", "priority": "high"},
+            {"key": "product_goal", "status": "missing", "priority": "high"},
+        ]
+        
+        result = service.quick_readiness_check("test-project", checklist, [])
+        
+        assert "missing_required_repo" in result
+        assert result["missing_required_repo"] == True
+    
+    def test_readiness_repo_present_no_flag(self):
+        """Readiness should NOT include missing_required_repo when repo is present."""
+        from app.discovery.readiness_service import DiscoveryReadinessService
+        
+        service = DiscoveryReadinessService()
+        
+        # Checklist with confirmed repo
+        checklist = [
+            {"key": "repo_exists", "status": "confirmed", "priority": "high"},
+            {"key": "product_goal", "status": "missing", "priority": "high"},
+        ]
+        
+        result = service.quick_readiness_check("test-project", checklist, [])
+        
+        assert "missing_required_repo" in result
+        assert result["missing_required_repo"] == False
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

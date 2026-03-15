@@ -111,7 +111,8 @@ class ChecklistItemModel(Base):
     label = Column(String(255))
     status = Column(String(20), default="missing")
     priority = Column(String(20), nullable=True)
-    evidence = Column(Text, nullable=True)
+    value = Column(Text, nullable=True)  # Full extracted value from user response
+    evidence = Column(Text, nullable=True)  # Brief evidence snippet
     updated_at = Column(DateTime, default=datetime.utcnow)
 
 

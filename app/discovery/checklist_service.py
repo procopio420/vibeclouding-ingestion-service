@@ -29,9 +29,10 @@ class ChecklistService:
         project_id: str, 
         key: str, 
         status: str, 
+        value: Optional[str] = None,
         evidence: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
-        """Update a checklist item's status and evidence."""
+        """Update a checklist item's status, value, and evidence."""
         session = get_session()
         try:
             item = session.query(ChecklistItemModel).filter(
@@ -44,12 +45,14 @@ class ChecklistService:
                 return None
             
             item.status = status
+            if value:
+                item.value = value
             if evidence:
                 item.evidence = evidence
             item.updated_at = datetime.utcnow()
             
             session.commit()
-            logger.info(f"Updated checklist item {key} to status {status}")
+            logger.info(f"Updated checklist item {key} to status {status}, value={value[:50] if value else None}...")
             
             return self._item_to_dict(item)
         except Exception as e:
@@ -122,6 +125,7 @@ class ChecklistService:
             "label": model.label,
             "status": model.status,
             "priority": model.priority,
+            "value": model.value,
             "evidence": model.evidence,
             "updated_at": model.updated_at.isoformat() if model.updated_at else None,
         }

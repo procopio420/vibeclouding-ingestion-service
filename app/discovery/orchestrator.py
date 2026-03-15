@@ -20,10 +20,10 @@ from app.discovery.progress_summary_service import ProgressSummaryService
 logger = logging.getLogger(__name__)
 
 BOOTSTRAP_QUESTIONS = [
-    "What does your project do? Can you describe what problem it solves?",
-    "Do you already have a repository for it?",
-    "Do you have any docs, diagrams, or notes?",
-    "What matters more right now: lower cost or stronger performance?",
+    "O que seu projeto faz? Pode descrever qual problema ele resolve?",
+    "Você já tem um repositório no GitHub para ele?",
+    "Tem alguma documentação, diagrama ou notas?",
+    "O que é mais importante agora: menor custo ou melhor performance?",
 ]
 
 
@@ -128,9 +128,10 @@ class DiscoveryOrchestrator:
                 project_id=project_id,
                 key=key,
                 status=upd.get("status", "inferred"),
+                value=upd.get("value"),
                 evidence=upd.get("evidence"),
             )
-            checklist_updates[key] = {"status": upd.get("status", "inferred"), "evidence": upd.get("evidence")}
+            checklist_updates[key] = {"status": upd.get("status", "inferred"), "value": upd.get("value"), "evidence": upd.get("evidence")}
             # Mark as asked and answered in lifecycle
             lifecycle.mark_asked(project_id, key)
             lifecycle.mark_answered(project_id, key)
@@ -346,48 +347,52 @@ class DiscoveryOrchestrator:
     ) -> str:
         """Build prompt for Gemini."""
         if is_initial:
-            return f"""You are a helpful technical discovery assistant helping a user define their project.
+            return f"""Você é um assistente técnico de descoberta que ajuda o usuário a definir seu projeto.
 
-Ask natural, non-technical questions to understand the project. Start with:
-1. Do you have a GitHub repo for this project?
-2. What does your project do?
-3. Who are your target users?
+IMPORTANTE: Responda SEMPRE em português brasileiro (pt-BR).
 
-IMPORTANT: Ask about the GitHub repo FIRST if not already provided.
-Keep it conversational and friendly. Ask 1-2 questions max."""
+Faça perguntas naturais e não-técnicas para entender o projeto. Comece com:
+1. Você tem um repositório no GitHub para o projeto?
+2. O que seu projeto faz?
+3. Quem são os usuários alvo?
+
+IMPORTANTE: Pergunte sobre o repositório primeiro se ainda não foi fornecido.
+Mantenha conversacional e friendly. Faça no máximo 1-2 perguntas."""
 
         context_parts = []
         if repo_url_detected:
-            context_parts.append("The user shared a repository URL. Acknowledge this and let them know you're analyzing it.")
+            context_parts.append("O usuário compartilhou uma URL de repositório. Reconheça isso e informe que está analisando.")
         
         readiness_status = readiness.get("status", "") if readiness else ""
         
         if readiness_status == "ready_for_architecture":
-            return "Great! Based on our conversation, I have enough information to help with architecture. Would you like me to proceed with generating architecture recommendations?"
+            return "Ótimo! Com base na nossa conversa, tenho informações suficientes para ajudar com a arquitetura. Gostaria que eu prossiga com as recomendações de arquitetura?"
         
         if readiness_status == "maybe_ready":
-            context_parts.append("The project is close to having enough information. Ask if there's anything else important to know.")
+            context_parts.append("O projeto está próximo de ter informações suficientes. Pergunte se há algo mais importante para saber.")
         
         # Force asking about the specific next_key if provided (deterministic progression)
         if next_key:
             from app.discovery.question_intents import QUESTION_INTENTS
-            next_question = QUESTION_INTENTS.get(next_key, {}).get("question", f"Tell me more about {next_key}")
-            context_parts.append(f"Ask specifically about: {next_question}")
+            next_question = QUESTION_INTENTS.get(next_key, {}).get("question", f"Me conte mais sobre {next_key}")
+            context_parts.append(f"Pergunte especificamente sobre: {next_question}")
         
         if high_priority:
             keys = [c["key"] for c in high_priority[:2]]
-            context_parts.append(f"Also address if needed: {', '.join(keys)}")
+            context_parts.append(f"Abra também se necessário: {', '.join(keys)}")
         
-        context = " ".join(context_parts) if context_parts else "Continue helping the user define their project."
+        context = " ".join(context_parts) if context_parts else "Continue ajudando o usuário a definir seu projeto."
         
-        return f"""You are a helpful technical discovery assistant.
+        return f"""Você é um assistente técnico de descoberta.
 
-User said: "{user_message}"
+IMPORTANTE: Responda SEMPRE em português brasileiro (pt-BR).
+
+O usuário disse: "{user_message}"
 
 {context}
 
-IMPORTANT: Do NOT ask broad questions that were already answered (like "what does your project do?" if they already explained it).
-Keep your response short (2-3 sentences), conversational, and non-technical. Ask one follow-up question if appropriate."""
+IMPORTANTE: NÃO faça perguntas amplas que já foram respondidas (como "o que seu projeto faz?" se ele já explicou).
+Mantenha sua resposta curta (2-3 frases), conversacional e não-técnica. Faça uma pergunta de acompanhamento se apropriado."""
     
     def _fallback_response(
         self, 
@@ -397,17 +402,17 @@ Keep your response short (2-3 sentences), conversational, and non-technical. Ask
     ) -> str:
         """Generate a simple fallback response without Gemini."""
         if is_initial:
-            return "Hi! I'm here to help you define your project. What does your project do? Do you have a repository for it?"
+            return "Olá! Estou aqui para ajudar a definir seu projeto. O que ele faz? Você tem um repositório?"
         
         if repo_url_detected:
-            return "Thanks for sharing the repository! I'm analyzing it now. In the meantime, can you tell me more about what the project does?"
+            return "Obrigado por compartilhar o repositório! Estou analisando agora. Enquanto isso, pode me contar mais sobre o que o projeto faz?"
         
         missing = [c for c in checklist if c["status"] == "missing"]
         if missing:
             next_q = missing[0]
-            return f"{QUESTION_TEMPLATES.get(next_q['key'], 'Can you tell me more about your project?')}"
+            return f"{QUESTION_TEMPLATES.get(next_q['key'], 'Pode me contar mais sobre seu projeto?')}"
         
-        return "Thanks! I have a good understanding of your project. Let me know if you'd like to proceed to the architecture phase."
+        return "Entendi! Tenho uma boa visão do seu projeto. Me avise quando quiser prosseguir para a fase de arquitetura."
 
     def _get_turn_count(self, project_id: str) -> int:
         """Get the current turn count for the project."""

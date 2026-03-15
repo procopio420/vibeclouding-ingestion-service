@@ -59,12 +59,14 @@ def _compute_next_best_step(project_id: str, context: Dict[str, Any]):
                 title = meta.get("question")
                 break
         if not title:
-            title = f"Next step for {next_key}"
+            from app.discovery.config import NEXT_STEP_FALLBACK
+            title = f"{NEXT_STEP_FALLBACK}{next_key}"
 
         step_type = "repo" if next_key == "repo_exists" else "clarification"
         description = None
         if next_key == "repo_exists":
-            description = "Verify whether a repository exists for the project."
+            from app.discovery.config import NEXT_STEP_DESCRIPTIONS_PT
+            description = NEXT_STEP_DESCRIPTIONS_PT.get("repo_exists", "Verificar se existe um repositório para o projeto.")
         else:
             try:
                 from app.discovery.question_service import QUESTION_TEMPLATES
@@ -72,7 +74,8 @@ def _compute_next_best_step(project_id: str, context: Dict[str, Any]):
             except Exception:
                 description = None
             if not description:
-                description = f"Address needed clarification for {next_key}."
+                from app.discovery.config import NEXT_STEP_DESCRIPTIONS_PT
+                description = NEXT_STEP_DESCRIPTIONS_PT.get(next_key, f"Necessária clarification para {next_key}.")
         return {"title": title, "description": description, "type": step_type}
     except Exception:
         return None
@@ -246,6 +249,7 @@ async def get_activity(project_id: str) -> Dict[str, Any]:
             # Resolve a human-friendly label from QUESTION_INTENTS
             label = intent_key
             from app.discovery.question_intents import QUESTION_INTENTS
+            from app.discovery.config import ACTIVITY_LABELS_PT
             for key, meta in QUESTION_INTENTS.items():
                 if meta.get("checklist_key") == intent_key:
                     label = meta.get("question", intent_key)
@@ -255,7 +259,9 @@ async def get_activity(project_id: str) -> Dict[str, Any]:
                 etype = "question_open"
             elif status == "answered":
                 etype = "question_answered"
-            events.append({"type": etype, "label": label, "timestamp": r.get("updated_at") or r.get("created_at")})
+            # Use pt-BR label for UI
+            label_pt = ACTIVITY_LABELS_PT.get(etype, label)
+            events.append({"type": etype, "label": label_pt, "timestamp": r.get("updated_at") or r.get("created_at")})
     except Exception:
         pass
 
@@ -268,7 +274,7 @@ async def get_activity(project_id: str) -> Dict[str, Any]:
             ts = j.started_at or j.created_at
             if ts is None:
                 continue
-            label = f"Repo ingestion: {j.id}"
+            label = f"Carregando repositório"
             events.append({"type": "repo_ingest", "label": label, "timestamp": ts})
         session.close()
     except Exception:

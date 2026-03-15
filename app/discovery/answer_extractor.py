@@ -1,6 +1,7 @@
 """LLM-powered structured answer extractor for discovery phase."""
 import json
 import logging
+import re
 from typing import Dict, Any, List, Optional
 
 from app.discovery.question_intents import QUESTION_INTENTS
@@ -27,7 +28,7 @@ class AnswerExtractor:
         
         Returns:
             {
-                "updates": [{"key", "status", "value_summary", "confidence", "evidence"}, ...],
+                "updates": [{"key", "status", "value", "confidence", "evidence"}, ...],
                 "answered_keys": [...],
                 "conflicts": [...],
                 "remaining_gaps": [...],
@@ -72,38 +73,43 @@ class AnswerExtractor:
             
             checklist_text = "\n".join(checklist_summary)
             
-            prompt = f"""You are a structured answer extractor for a software discovery conversation.
+            prompt = f"""Você é um extrator estruturado de respostas para uma conversa de descoberta de software.
 
-CURRENT CHECKLIST (items still missing):
+IMPORTANTE: Responda SEMPRE em português brasileiro (pt-BR) para as instruções e contexto.
+
+CURRENT CHECKLIST (itens ainda faltando):
 {checklist_text}
 
-USER'S MESSAGE:
+MENSAGEM DO USUÁRIO:
 "{user_message}"
 
-Your task is to extract which checklist items were addressed by the user's message.
+Sua tarefa é extrair quais itens do checklist foram abordados pela mensagem do usuário.
 
-For each item the user provided information about, respond with JSON:
+Para cada item que o usuário forneceu informação, responda com JSON:
 {{
   "updates": [
     {{
       "key": "checklist_key",
-      "status": "confirmed" or "inferred",
-      "value_summary": "1-2 sentence summary of what user said about this topic",
+      "status": "confirmed" ou "inferred",
+      "value": "resposta completa do usuário sobre este tópico (1-2 frases)",
       "confidence": 0.0-1.0,
-      "evidence": "direct quote or brief context from user message"
+      "evidence": "citação breve ou contexto da mensagem do usuário"
     }}
   ]
 }}
 
-Rules:
-- status "confirmed" = user explicitly mentioned this topic
-- status "inferred" = user implied this topic without explicitly mentioning it
-- Only include items that were actually addressed in the user's message
-- If nothing was addressed, return empty updates array
-- Be specific in value_summary - capture what the user actually said
-- confidence: 0.9+ for explicit mentions, 0.6-0.8 for strong inferences, 0.3-0.5 for weak inferences
+Regras:
+- status "confirmed" = usuário mencionou explicitamente este tópico
+- status "inferred" = usuário暗示ou este tópico sem mencionar explicitamente
+- Extraia project_name SOMENTE se o usuário nomeou explicitamente seu projeto (ex: "é chamado de X", "nome do projeto é X")
+- NÃO infira project_name de descrições de produto como "software de gestão..."
+- NÃO infira repo_exists de texto vago - apenas quando o usuário confirmar explicitamente ou fornecer URL
+- Inclua apenas itens que foram realmente abordados na mensagem do usuário
+- Se nada foi abordado, retorne array updates vazia
+- Seja específico no value - capture o que o usuário realmente disse
+- confidence: 0.9+ para menções explícitas, 0.6-0.8 para inferências fortes, 0.3-0.5 para inferências fracas
 
-Respond ONLY with valid JSON, no explanation."""
+Responda ONLY com JSON válido, sem explicação."""
 
             response = analyzer.generate_chat_response(prompt)
             
@@ -112,7 +118,6 @@ Respond ONLY with valid JSON, no explanation."""
             
             # Parse JSON from response
             try:
-                # Try to extract JSON from response
                 response = response.strip()
                 if "```json" in response:
                     response = response.split("```json")[1].split("```")[0]
@@ -121,7 +126,6 @@ Respond ONLY with valid JSON, no explanation."""
                 
                 result = json.loads(response.strip())
                 
-                # Validate structure
                 if not isinstance(result, dict):
                     return None
                     
@@ -159,56 +163,206 @@ Respond ONLY with valid JSON, no explanation."""
         updates = []
         answered_keys = []
         
+        # Check for explicit project name FIRST (before generic patterns)
+        # ONLY extract if explicitly named
+        project_name_patterns = [
+            r"(?:it's|called|name is|project name is|o projeto se chama|chama-se|nome do projeto)[:\s]+([A-Za-z][A-Za-z0-9\s]{2,30})",
+            r"^([A-Z][a-zA-Z0-9\s]{2,30})$",  # Single capitalized word at start
+        ]
+        
+        for pattern in project_name_patterns:
+            match = re.search(pattern, original_text, re.IGNORECASE)
+            if match:
+                potential_name = match.group(1).strip()
+                # Verify it's NOT a generic description
+                generic_terms = ["software", "sistema", "gestão", "management", "app", "application", "plataforma"]
+                if not any(term in potential_name.lower() for term in generic_terms):
+                    updates.append({
+                        "key": "project_name",
+                        "status": "confirmed",
+                        "value": potential_name,
+                        "confidence": 0.9,
+                        "evidence": f"explicit name: {potential_name}"
+                    })
+                    answered_keys.append("project_name")
+                    break
+        
+        # Check for repo URL first (before generic patterns)
+        repo_url_patterns = [
+            r'https?://github\.com/[\w-]+/[\w.-]+(?:\.git)?',
+            r'https?://gitlab\.com/[\w-]+/[\w.-]+(?:\.git)?',
+            r'https?://bitbucket\.org/[\w-]+/[\w.-]+(?:\.git)?',
+            r'git@github\.com:[\w-]+/[\w.-]+\.git',
+            r'git@gitlab\.com:[\w-]+/[\w.-]+\.git',
+        ]
+        
+        for pattern in repo_url_patterns:
+            match = re.search(pattern, original_text, re.IGNORECASE)
+            if match:
+                url = match.group(0)
+                if url.endswith('.git'):
+                    url = url[:-4]
+                updates.append({
+                    "key": "repo_exists",
+                    "status": "confirmed",
+                    "value": url,
+                    "confidence": 0.95,
+                    "evidence": "repo URL detected"
+                })
+                answered_keys.append("repo_exists")
+                break
+        
+        # Check for explicit yes/no to repo question
+        # This only triggers if NOT already detected a URL
+        if "repo_exists" not in answered_keys:
+            yes_patterns = [r'\byes\b', r'\byeah\b', r'\byep\b', r'\bsure\b', r'\bsim\b', r'\btenho\b', r'\btemos\b']
+            no_patterns = [r'\bno\b', r'\bnope\b', r'\bnão\b', r'\bnao\b', r'\bnot yet\b', r'\bainda não\b', r'\bdon'?t have\b']
+            
+            for pattern in yes_patterns:
+                if re.search(pattern, text):
+                    updates.append({
+                        "key": "repo_exists",
+                        "status": "confirmed",
+                        "value": "user confirmed they have a repo",
+                        "confidence": 0.8,
+                        "evidence": "explicit yes response"
+                    })
+                    answered_keys.append("repo_exists")
+                    break
+            
+            if "repo_exists" not in answered_keys:
+                for pattern in no_patterns:
+                    if re.search(pattern, text):
+                        updates.append({
+                            "key": "repo_exists",
+                            "status": "missing",  # Explicit no = confirmed missing
+                            "value": "user confirmed no repo yet",
+                            "confidence": 0.9,
+                            "evidence": "explicit no response"
+                        })
+                        answered_keys.append("repo_exists")
+                        break
+        
         # Keyword patterns for each checklist key
-        # Format: key -> (keywords_for_confirmed, keywords_for_inferred, status_if_found)
+        # Format: key -> {confirmed: [...], inferred: [...]}
         patterns = {
-            "repo_exists": {
-                "confirmed": ["github.com", "gitlab.com", "bitbucket", "repository", "repo url", "git repo"],
-                "inferred": ["repo", "repository", "github", "gitlab", "bitbucket"],
-            },
             "product_goal": {
-                "confirmed": ["software", "system", "platform", "application", "app for", "manage", "manageing", " gestão ", "sistema de", "software de"],
-                "inferred": ["build", "building", "create", "develop", "make", "we make", "we build", "we sell", "selling"],
+                "confirmed": [
+                    # English
+                    "software", "system", "platform", "application", "manage", "managing",
+                    "build", "building", "create", "develop", "making",
+                    # Portuguese
+                    "software de", "sistema de", "gestão de", "plataforma", 
+                    "fazemos", "produzimos", "vendemos", "gestão", "fábrica",
+                    "postes", "manilhas", "concreto", "artefatos"
+                ],
+                "inferred": [
+                    "project", "business", "company", "startup", "empresa"
+                ],
             },
             "target_users": {
-                "confirmed": ["users", "customers", "clients", "b2b", "b2c", "employees", "sell to", "selling to", "target audience"],
-                "inferred": ["people", "stores", "companies", "business", "market"],
+                "confirmed": [
+                    # English
+                    "customers", "clients", "users", "b2b", "b2c", "employees",
+                    "selling to", "sell to", "stores", "businesses", "market",
+                    # Portuguese
+                    "clientes", "lojas", "empresas", "vendemos para", "para lojas",
+                    "b2b", "b2c", "consumidores"
+                ],
+                "inferred": [
+                    "people", "people who", "target"
+                ],
             },
             "application_type": {
-                "confirmed": ["web app", "mobile app", "api", "chatbot", "website", "web application", "mobile application"],
-                "inferred": ["web", "mobile", "online", "digital"],
+                "confirmed": [
+                    # English
+                    "web app", "mobile app", "api", "chatbot", "website", "web application",
+                    "mobile application", "saas", "software as a service", "platform",
+                    # Portuguese
+                    "aplicativo", "app móvil", "app móvel", "sistema", "plataforma",
+                    "loja virtual", "e-commerce", "site", "plataforma web"
+                ],
+                "inferred": [
+                    "online", "digital", "computer", "desktop"
+                ],
             },
             "entry_channels": {
-                "confirmed": ["web", "mobile", "whatsapp", "telegram", "api", "website", "login", "access via"],
-                "inferred": ["access", "channel", "through"],
+                "confirmed": [
+                    # English
+                    "mobile", "cellphone", "smartphone", "whatsapp", "telegram",
+                    "browser", "web browser", "website", "login", "access via",
+                    "ios", "android", "app store", "play store",
+                    # Portuguese
+                    "mobile app", "app móvel", "celular", "whatsapp", "navegador",
+                    "site", "web", "computador", "relatório", "relatorios"
+                ],
+                "inferred": [
+                    "channel", "access", "through"
+                ],
             },
             "core_components": {
-                "confirmed": ["components", "features", "modules", "main functions", "main features"],
-                "inferred": ["parts", "functions", "capabilities"],
+                "confirmed": [
+                    "components", "features", "modules", "main functions", "main features",
+                    "parts", "funções principais", "módulos", "componentes"
+                ],
+                "inferred": [
+                    "functions", "capabilities", "capabilities"
+                ],
             },
             "database": {
-                "confirmed": ["database", "postgresql", "mysql", "mongodb", "sql", "store data", "persist"],
-                "inferred": ["data storage", "save data"],
+                "confirmed": [
+                    "database", "postgresql", "mysql", "mongodb", "sql", "store data",
+                    "persist", "banco de dados", "sql", "mysql", "postgresql"
+                ],
+                "inferred": [
+                    "data storage", "save data"
+                ],
             },
             "auth_model": {
-                "confirmed": ["login", "log in", "authentication", "password", "oauth", "sign in", "user account"],
-                "inferred": ["users need to", "require login", "must log"],
+                "confirmed": [
+                    "login", "log in", "authentication", "password", "oauth",
+                    "sign in", "user account", "users need to log", "cadastro",
+                    "autenticação", "login", "senha"
+                ],
+                "inferred": [
+                    "require login", "must log in"
+                ],
             },
             "external_integrations": {
-                "confirmed": ["integrations", "api integration", "whatsapp", "payment", "stripe", "email", "maps"],
-                "inferred": ["connect to", "integrate with", "external"],
+                "confirmed": [
+                    "integrations", "api integration", "whatsapp", "payment", "stripe",
+                    "email", "maps", "integration", "integração", "whatsapp"
+                ],
+                "inferred": [
+                    "connect to", "integrate with", "external"
+                ],
             },
             "file_storage": {
-                "confirmed": ["file storage", "images", "documents", "upload", "s3", "storage"],
-                "inferred": ["store files", "upload files"],
+                "confirmed": [
+                    "file storage", "images", "documents", "upload", "s3", "storage",
+                    "arquivos", "imagens", "upload", "armazenamento"
+                ],
+                "inferred": [
+                    "store files", "upload files"
+                ],
             },
             "traffic_expectation": {
-                "confirmed": ["users", "traffic", "scale", "scalability", "million", "thousand"],
-                "inferred": ["grow", "growh", "many users"],
+                "confirmed": [
+                    "users", "traffic", "scale", "scalability", "million", "thousand",
+                    "many users", "high traffic", "users initially"
+                ],
+                "inferred": [
+                    "grow", "growth"
+                ],
             },
             "cost_priority": {
-                "confirmed": ["cost", "cheap", "expensive", "budget", "low cost", "high cost"],
-                "inferred": ["price", "affordable"],
+                "confirmed": [
+                    "cost", "cheap", "expensive", "budget", "low cost", "high cost",
+                    "custo", "preço", "barato", "orçamento"
+                ],
+                "inferred": [
+                    "price", "affordable"
+                ],
             },
         }
         
@@ -220,20 +374,10 @@ Respond ONLY with valid JSON, no explanation."""
             if not key:
                 continue
             
-            # Check for repo URL pattern (special case)
-            if "github.com" in text or "gitlab.com" in text or "bitbucket.org" in text:
-                if key == "repo_exists":
-                    updates.append({
-                        "key": key,
-                        "status": "confirmed",
-                        "value_summary": "Repository URL detected in message",
-                        "confidence": 0.95,
-                        "evidence": "URL pattern found"
-                    })
-                    answered_keys.append(key)
-                    continue
+            # Skip keys we've already handled
+            if key in answered_keys:
+                continue
             
-            # Check patterns
             if key in patterns:
                 pattern = patterns[key]
                 
@@ -243,7 +387,7 @@ Respond ONLY with valid JSON, no explanation."""
                         updates.append({
                             "key": key,
                             "status": "confirmed",
-                            "value_summary": original_text[:150],
+                            "value": original_text[:300],
                             "confidence": 0.85,
                             "evidence": f"keyword: {kw}"
                         })
@@ -256,7 +400,7 @@ Respond ONLY with valid JSON, no explanation."""
                             updates.append({
                                 "key": key,
                                 "status": "inferred",
-                                "value_summary": original_text[:150],
+                                "value": original_text[:300],
                                 "confidence": 0.6,
                                 "evidence": f"inferred keyword: {kw}"
                             })

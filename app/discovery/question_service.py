@@ -10,21 +10,21 @@ logger = logging.getLogger(__name__)
 
 
 QUESTION_TEMPLATES = {
-    "product_goal": "What does your project do? Can you describe what problem it solves?",
-    "target_users": "Who are the target users for this application?",
-    "entry_channels": "How do you expect users to access your app? (web, mobile, API, WhatsApp, etc.)",
-    "application_type": "What type of application are you building? (web app, mobile, API, chatbot, etc.)",
-    "core_components": "What are the main components or features of your application?",
-    "database": "Will you need to store data in a database? If so, what kind of data?",
-    "cache_or_queue": "Will you need caching for performance or message queues for background processing?",
-    "background_processing": "Will the app need to process things in the background?",
-    "external_integrations": "Will it connect to external APIs like WhatsApp, payments, maps, or email?",
-    "auth_model": "Will users need to log in? What authentication method?",
-    "file_storage": "Will you need to store files, images, or documents?",
-    "traffic_expectation": "How many users do you expect initially? Is this a quick prototype or something that needs to scale?",
-    "availability_requirement": "Is it okay if the app goes down for a few minutes, or does it need high availability?",
-    "cost_priority": "What's more important right now - keeping costs low or building for scale?",
-    "compliance_or_sensitive_data": "Does your application handle sensitive data or have compliance requirements?",
+    "product_goal": "O que seu projeto faz? Pode descrever qual problema ele resolve?",
+    "target_users": "Quem são os usuários alvo?",
+    "entry_channels": "Como você espera que os usuários acessem o app? (web, mobile, API, WhatsApp, etc.)",
+    "application_type": "Que tipo de aplicação você está construindo? (web app, mobile, API, chatbot, etc.)",
+    "core_components": "Quais são os principais componentes ou funcionalidades do seu aplicativo?",
+    "database": "Você vai precisar armazenar dados em um banco de dados? Se sim, que tipo de dados?",
+    "cache_or_queue": "Você vai precisar de cache para performance ou filas de mensagens para processamento em background?",
+    "background_processing": "O app vai precisar processar coisas em background?",
+    "external_integrations": "Vai conectar com APIs externas como WhatsApp, pagamentos, mapas ou email?",
+    "auth_model": "Os usuários vão precisar fazer login? Qual método de autenticação?",
+    "file_storage": "Você vai precisar armazenar arquivos, imagens ou documentos?",
+    "traffic_expectation": "Quantos usuários você espera inicialmente? É um protótipo rápido ou algo que precisa escalar?",
+    "availability_requirement": "É aceitável o app ficar fora do ar por alguns minutos, ou precisa de alta disponibilidade?",
+    "cost_priority": "O que é mais importante agora - manter custos baixos ou construir para escalar?",
+    "compliance_or_sensitive_data": "Seu aplicativo lida com dados sensíveis ou tem requisitos de conformidade?",
 }
 
 

@@ -68,9 +68,13 @@ class DiscoveryReadinessService:
         
         notes = []
         if critical_missing:
-            notes.append(f"Missing critical items: {', '.join([m['key'] for m in critical_missing])}")
-        if blocking_questions:
-            notes.append(f"High priority questions open: {len(blocking_questions)}")
+            notes.append(f"Itens críticos faltando: {', '.join([m['key'] for m in critical_missing])}")
+            if blocking_questions:
+                notes.append(f"Perguntas abertas: {len(blocking_questions)}")
+        
+        # Check for missing required repo
+        repo_missing = any(m["key"] == "repo_exists" for m in missing)
+        missing_required_repo = repo_missing
         
         status = self._determine_quick_status(
             critical_missing=critical_missing,
@@ -91,6 +95,7 @@ class DiscoveryReadinessService:
             "confirmed_items": [c["key"] for c in confirmed],
             "inferred_items": [i["key"] for i in inferred],
             "blocking_questions": blocking_questions,
+            "missing_required_repo": missing_required_repo,
             "notes": notes,
             "evaluated_at": datetime.utcnow().isoformat(),
         }
@@ -157,11 +162,11 @@ class DiscoveryReadinessService:
         
         notes = []
         if critical_from_context:
-            notes.append(f"Context gaps: {', '.join(critical_from_context)}")
+            notes.append(f"GAPs de contexto: {', '.join(critical_from_context)}")
         if ingestion_complete:
-            notes.append("Repository analysis complete")
+            notes.append("Análise do repositório completa")
         else:
-            notes.append("No repository analysis yet")
+            notes.append("Análise do repositório pendente")
         
         status = self._determine_full_status(
             quick_status=quick_result["status"],
