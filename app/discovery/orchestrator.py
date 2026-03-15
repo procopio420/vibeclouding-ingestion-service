@@ -17,6 +17,7 @@ from app.discovery.question_selector import QuestionSelector
 from app.discovery.question_lifecycle_service import QuestionLifecycleService
 from app.discovery.progress_summary_service import ProgressSummaryService
 from app.discovery.natural_language_mapper import NaturalLanguageMapper
+from app.discovery.sufficiency import evaluate as evaluate_sufficiency, is_sufficient
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,21 @@ class DiscoveryOrchestrator:
         session_id = session["id"]
         logger.info(f"Session found: {session_id}, turn: {turn_count}")
         
+        # Load current focus (answer sufficiency: stay on topic until resolved)
+        current_focus_key = session.get("current_focus_key")
+        focus_attempt_count = session.get("focus_attempt_count") or 0
+        if not current_focus_key:
+            next_key_initial = self._select_next_key_deterministic(
+                self.checklist_service.get_checklist(project_id),
+                lifecycle,
+                self.readiness_service.quick_readiness_check(project_id, self.checklist_service.get_checklist(project_id)),
+                turn_count,
+            )
+            current_focus_key = next_key_initial
+            focus_attempt_count = 1
+            self.session_service.update_focus(project_id, current_focus_key=current_focus_key, focus_attempt_count=1)
+            logger.info(f"[Discovery] {project_id} - no focus yet, set current_focus_key={current_focus_key}")
+        
         user_msg = self.chat_service.save_message(
             project_id=project_id,
             session_id=session_id,
@@ -120,17 +136,23 @@ class DiscoveryOrchestrator:
         
         logger.info(f"[Discovery] {project_id} - extraction result: {extraction}")
         
+        # Evaluate sufficiency for current focus (hybrid: heuristics + AI)
+        sufficiency_outcome = evaluate_sufficiency(
+            current_focus_key,
+            message,
+            repo_url=repo_url,
+            extraction=extraction,
+        )
+        logger.info(f"[Discovery] {project_id} - sufficiency for {current_focus_key}: {sufficiency_outcome}")
+        
         # Use safe extraction handling to prevent crashes on malformed data
         from app.discovery.answer_extraction_parser import safe_get_updates, safe_get_answered_keys
         
         checklist_updates = {}
-        # Build set of valid keys for safety check
         valid_keys = {item.get("key") for item in checklist if item.get("key")}
         
-        # Safe extraction - won't crash on bool/string/None
         for upd in safe_get_updates(extraction):
             try:
-                # Safely extract key - handle any type
                 if not isinstance(upd, dict):
                     logger.warning(f"[Discovery] {project_id} - Skipping invalid update (not a dict): {type(upd)}")
                     continue
@@ -138,13 +160,15 @@ class DiscoveryOrchestrator:
                 key = upd.get("key")
                 if not key:
                     continue
-                
-                # Safety check: skip items that don't exist in checklist
                 if key not in valid_keys:
                     logger.warning(f"[Discovery] {project_id} - Skipping update for non-existent checklist item: {key}")
                     continue
                 
-                # Safely get values with defaults
+                # Do not apply or mark answered for current focus when answer was not sufficient
+                if key == current_focus_key and not is_sufficient(sufficiency_outcome):
+                    logger.info(f"[Discovery] {project_id} - skipping apply for {key} (insufficient: {sufficiency_outcome})")
+                    continue
+                
                 status = upd.get("status") if isinstance(upd.get("status"), str) else "inferred"
                 value = upd.get("value") if upd.get("value") is not None else ""
                 evidence = upd.get("evidence") if isinstance(upd.get("evidence"), str) else ""
@@ -157,15 +181,15 @@ class DiscoveryOrchestrator:
                     evidence=evidence,
                 )
                 checklist_updates[key] = {"status": status, "value": value, "evidence": evidence}
-                # Mark as asked and answered in lifecycle
                 lifecycle.mark_asked(project_id, key)
                 lifecycle.mark_answered(project_id, key)
             except Exception as e:
                 logger.warning(f"[Discovery] {project_id} - Failed to process update: {e}")
                 continue
         
-        # Also mark any explicitly answered keys (safe extraction)
         for k in safe_get_answered_keys(extraction):
+            if k == current_focus_key and not is_sufficient(sufficiency_outcome):
+                continue
             try:
                 lifecycle.mark_answered(project_id, k)
             except Exception as e:
@@ -173,9 +197,16 @@ class DiscoveryOrchestrator:
         
         if repo_url:
             self._trigger_repo_ingestion(project_id, repo_url)
-            # Mark repo as answered
             lifecycle.mark_asked(project_id, "repo_exists")
-            lifecycle.mark_answered(project_id, "repo_exists")
+            if current_focus_key == "repo_exists" and is_sufficient(sufficiency_outcome):
+                lifecycle.mark_answered(project_id, "repo_exists")
+                self.checklist_service.update_item(
+                    project_id=project_id,
+                    key="repo_exists",
+                    status="confirmed",
+                    value=repo_url,
+                    evidence="repo URL provided",
+                )
         
         checklist = self.checklist_service.get_checklist(project_id)
         
@@ -192,11 +223,27 @@ class DiscoveryOrchestrator:
             self._update_meaningful_timestamp(project_id)
             quick_result = self.readiness_service.quick_readiness_check(project_id, checklist)
             
-            # Deterministic next key selection with repo-first enforcement
-            next_key = self._select_next_key_deterministic(
-                checklist, lifecycle, quick_result, turn_count
-            )
-            lifecycle.current_focus_key = next_key
+            if is_sufficient(sufficiency_outcome):
+                next_key = self._select_next_key_deterministic(
+                    checklist, lifecycle, quick_result, turn_count
+                )
+                self.session_service.update_focus(
+                    project_id,
+                    current_focus_key=next_key,
+                    focus_attempt_count=0,
+                    resolution_status="sufficient",
+                )
+                lifecycle.current_focus_key = next_key
+                logger.info(f"[Discovery] {project_id} - sufficient, advanced to next_key: {next_key}")
+            else:
+                next_key = current_focus_key
+                self.session_service.update_focus(
+                    project_id,
+                    focus_attempt_count=focus_attempt_count + 1,
+                    resolution_status=sufficiency_outcome,
+                )
+                lifecycle.current_focus_key = current_focus_key
+                logger.info(f"[Discovery] {project_id} - not sufficient ({sufficiency_outcome}), re-ask same key: {next_key}, attempt: {focus_attempt_count + 1}")
             
             logger.info(f"[Discovery] {project_id} - READINESS: status={quick_result.get('status')}, coverage={quick_result.get('coverage')}, missing_critical={quick_result.get('missing_critical_items')}")
             logger.info(f"[Discovery] {project_id} - selected next_key: {next_key}, turn: {turn_count}")
@@ -214,6 +261,8 @@ class DiscoveryOrchestrator:
         else:
             state_transition = None
             quick_result = self.readiness_service.quick_readiness_check(project_id, checklist)
+            if not lifecycle.current_focus_key:
+                lifecycle.current_focus_key = current_focus_key
         
         response_text = self._generate_response_with_gemini(
             project_id=project_id,
@@ -221,7 +270,9 @@ class DiscoveryOrchestrator:
             checklist=checklist,
             readiness=quick_result or {},
             repo_url_detected=bool(repo_url),
-            next_key=lifecycle.current_focus_key
+            next_key=lifecycle.current_focus_key,
+            reask_attempt=focus_attempt_count if not is_sufficient(sufficiency_outcome) else 0,
+            resolution_status=sufficiency_outcome if not is_sufficient(sufficiency_outcome) else None,
         )
         
         assistant_msg = self.chat_service.save_message(
@@ -351,7 +402,9 @@ class DiscoveryOrchestrator:
         readiness: Dict,
         repo_url_detected: bool = False,
         is_initial: bool = False,
-        next_key: Optional[str] = None
+        next_key: Optional[str] = None,
+        reask_attempt: int = 0,
+        resolution_status: Optional[str] = None,
     ) -> str:
         """Generate a natural response using Gemini."""
         try:
@@ -359,7 +412,7 @@ class DiscoveryOrchestrator:
             analyzer = get_llm_analyzer()
             
             if not analyzer.is_available() or analyzer.__class__.__name__ == "NoOpAnalyzer":
-                return self._fallback_response(checklist, repo_url_detected, is_initial)
+                return self._fallback_response(checklist, repo_url_detected, is_initial, next_key=next_key, reask_attempt=reask_attempt)
             
             missing_items = [c for c in checklist if c["status"] == "missing"]
             high_priority = [c for c in missing_items if c["priority"] == "high"]
@@ -372,20 +425,22 @@ class DiscoveryOrchestrator:
                 is_initial=is_initial,
                 missing_items=missing_items,
                 high_priority=high_priority,
-                next_key=next_key
+                next_key=next_key,
+                reask_attempt=reask_attempt,
+                resolution_status=resolution_status,
             )
             
             response = analyzer.generate_chat_response(prompt)
             
             if not response:
                 logger.warning("Gemini returned empty response, using fallback")
-                return self._fallback_response(checklist, repo_url_detected, is_initial)
+                return self._fallback_response(checklist, repo_url_detected, is_initial, next_key=next_key, reask_attempt=reask_attempt)
             
             return response
             
         except Exception as e:
             logger.warning(f"Gemini response generation failed: {e}")
-            return self._fallback_response(checklist, repo_url_detected, is_initial)
+            return self._fallback_response(checklist, repo_url_detected, is_initial, next_key=next_key, reask_attempt=reask_attempt)
     
     def _build_response_prompt(
         self,
@@ -396,7 +451,9 @@ class DiscoveryOrchestrator:
         is_initial: bool,
         missing_items: List[Dict],
         high_priority: List[Dict],
-        next_key: Optional[str] = None
+        next_key: Optional[str] = None,
+        reask_attempt: int = 0,
+        resolution_status: Optional[str] = None,
     ) -> str:
         """Build prompt for Gemini."""
         if is_initial:
@@ -446,6 +503,13 @@ Exemplo: "Ótimo! Pelo que entendi, [resumo breve do projeto]. Vamos seguir para
         if readiness_status == "maybe_ready":
             context_parts.append("O projeto está próximo de ter informações suficientes. Pergunte se há algo mais importante que ainda não covered.")
 
+        # Re-ask: same topic but different phrasing when answer was insufficient
+        if next_key and reask_attempt and reask_attempt > 0:
+            context_parts.append(
+                "O usuário ainda não respondeu de forma clara o suficiente. NÃO mude de assunto. "
+                "Faça a MESMA pergunta de outro jeito: mais simples, com exemplos ou reformulada. "
+                "Não repita a mesma frase; seja natural e acolhedor."
+            )
         # Force asking about the specific next_key using NATURAL language
         if next_key:
             natural_question = NaturalLanguageMapper.get_full_question(next_key)
@@ -474,10 +538,12 @@ Resposta:
 - Nunca use termos técnicos internos nas perguntas"""
     
     def _fallback_response(
-        self, 
-        checklist: List[Dict], 
+        self,
+        checklist: List[Dict],
         repo_url_detected: bool,
-        is_initial: bool
+        is_initial: bool,
+        next_key: Optional[str] = None,
+        reask_attempt: int = 0,
     ) -> str:
         """Generate a simple fallback response without Gemini."""
         if is_initial:
@@ -485,6 +551,18 @@ Resposta:
         
         if repo_url_detected:
             return "Obrigado por compartilhar o repositório! Estou analisando agora. Enquanto isso, pode me contar mais sobre o que o projeto faz?"
+        
+        # Re-ask variants when answer was insufficient (same topic, different phrasing)
+        if next_key and reask_attempt and reask_attempt > 0:
+            reask_variants = {
+                "repo_exists": "Sem problema — você já criou um repositório no GitHub para esse projeto ou ainda vai criar? Se já tiver, pode me mandar a URL?",
+                "product_goal": "Tudo bem — no dia a dia, o que esse sistema vai ajudar a pessoa a fazer melhor? Qual problema ele resolve na prática?",
+                "target_users": "Quem são as pessoas que vão usar esse sistema no dia a dia? Pode dar um exemplo?",
+                "entry_channels": "Como as pessoas vão acessar? Pelo celular, computador, WhatsApp ou outro jeito?",
+                "core_components": "Beleza. Pensando no básico: cadastro, pedidos, painel, catálogo, pagamentos… o que disso é realmente essencial no começo?",
+            }
+            if next_key in reask_variants:
+                return reask_variants[next_key]
         
         missing = [c for c in checklist if c.get("status") == "missing"]
         if missing:

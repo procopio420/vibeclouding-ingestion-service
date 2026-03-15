@@ -1,7 +1,7 @@
 """Alembic-driven Postgres DB access for Phase 1 (Postgres-only)."""
 import os
 from datetime import datetime
-from sqlalchemy import create_engine, Column, String, DateTime, Text, ForeignKey, Boolean
+from sqlalchemy import create_engine, Column, String, DateTime, Text, ForeignKey, Boolean, Integer
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://vibe:vibe@db:5432/vibe_context")
@@ -82,6 +82,10 @@ class DiscoverySessionModel(Base):
     architecture_triggered = Column(Boolean, default=False)
     architecture_triggered_at = Column(DateTime, nullable=True)
     architecture_trigger_status = Column(String(50), nullable=True)
+    # Answer sufficiency: stay on topic until resolved
+    current_focus_key = Column(String(100), nullable=True, index=True)
+    focus_attempt_count = Column(Integer, default=0)
+    resolution_status = Column(String(30), nullable=True)  # sufficient | partial | ambiguous | not_answered
 
 
 class DiscoveryQuestionLifecycleModel(Base):

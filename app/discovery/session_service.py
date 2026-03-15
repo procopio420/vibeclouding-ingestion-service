@@ -227,9 +227,38 @@ class DiscoverySessionService:
         finally:
             session.close()
     
+    def update_focus(
+        self,
+        project_id: str,
+        current_focus_key: Optional[str] = None,
+        focus_attempt_count: Optional[int] = None,
+        resolution_status: Optional[str] = None,
+    ) -> None:
+        """Update answer-sufficiency focus state for the discovery session."""
+        session = get_session()
+        try:
+            discovery_session = session.query(DiscoverySessionModel).filter(
+                DiscoverySessionModel.project_id == project_id
+            ).first()
+            if not discovery_session:
+                return
+            if current_focus_key is not None:
+                discovery_session.current_focus_key = current_focus_key
+            if focus_attempt_count is not None:
+                discovery_session.focus_attempt_count = focus_attempt_count
+            if resolution_status is not None:
+                discovery_session.resolution_status = resolution_status
+            discovery_session.updated_at = datetime.utcnow()
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Failed to update focus: {e}")
+        finally:
+            session.close()
+
     def _session_to_dict(self, model: DiscoverySessionModel) -> Dict[str, Any]:
         """Convert session model to dict."""
-        return {
+        out = {
             "id": model.id,
             "project_id": model.project_id,
             "state": model.state,
@@ -242,6 +271,13 @@ class DiscoverySessionService:
             "active_ingestion_job_ids": json.loads(model.active_ingestion_job_ids) if model.active_ingestion_job_ids else [],
             "notes": model.notes,
         }
+        if hasattr(model, "current_focus_key"):
+            out["current_focus_key"] = model.current_focus_key
+        if hasattr(model, "focus_attempt_count"):
+            out["focus_attempt_count"] = model.focus_attempt_count if model.focus_attempt_count is not None else 0
+        if hasattr(model, "resolution_status"):
+            out["resolution_status"] = model.resolution_status
+        return out
 
 
 __all__ = ["DiscoverySessionService", "DEFAULT_CHECKLIST_ITEMS"]
