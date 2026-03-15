@@ -9,8 +9,9 @@ This test validates that:
 """
 import pytest
 import uuid
-from unittest.mock import patch, MagicMock
 from datetime import datetime
+from typing import Optional
+from unittest.mock import patch, MagicMock
 
 
 class TestDiscoveryProgression:
@@ -44,7 +45,7 @@ class TestDiscoveryProgression:
                     with patch('app.discovery.orchestrator.AnswerExtractor') as MockExtractor:
                         with patch('app.discovery.orchestrator.DiscoveryReadinessService') as MockReadiness:
                             with patch('app.discovery.orchestrator.QuestionSelector') as MockSelector:
-                                with patch('app.discovery.orchestrator.SessionService') as MockSession:
+                                with patch('app.discovery.orchestrator.DiscoverySessionService') as MockSession:
                                     
                                     # Setup mocks
                                     mock_lifecycle = MagicMock()
@@ -567,6 +568,203 @@ class TestReadinessMissingRepo:
         
         assert "missing_required_repo" in result
         assert result["missing_required_repo"] == False
+
+
+class TestIntentTypeDiscoveryPolicies:
+    """Intent-type-specific discovery: project_name fallback, repo absent, repo URL required."""
+
+    def _run_handle_user_message(
+        self,
+        project_id: str,
+        message: str,
+        current_focus_key: str,
+        checklist: list,
+        extraction: dict,
+        repo_url: Optional[str] = None,
+    ):
+        """Run handle_user_message with full mocks; return mocks for assertion."""
+        from app.discovery.orchestrator import (
+            DiscoveryOrchestrator,
+            REPO_ABSENT_VALUE,
+            PROJECT_NAME_FALLBACK,
+        )
+
+        with patch("app.discovery.orchestrator.QuestionLifecycleService") as MockLifecycle:
+            with patch("app.discovery.orchestrator.ChatService") as MockChat:
+                with patch("app.discovery.orchestrator.ChecklistService") as MockChecklist:
+                    with patch("app.discovery.orchestrator.AnswerExtractor") as MockExtractor:
+                        with patch("app.discovery.orchestrator.DiscoveryReadinessService") as MockReadiness:
+                            with patch("app.discovery.orchestrator.QuestionSelector") as MockSelector:
+                                with patch("app.discovery.orchestrator.DiscoverySessionService") as MockSession:
+                                    with patch("app.discovery.orchestrator.ProgressSummaryService") as MockProgress:
+                                        with patch("app.discovery.orchestrator.NaturalLanguageMapper"):
+                                            with patch.object(
+                                                DiscoveryOrchestrator,
+                                                "_trigger_repo_ingestion",
+                                                return_value="job-123",
+                                            ) as mock_trigger:
+                                                with patch.object(
+                                                    DiscoveryOrchestrator,
+                                                    "_generate_response_with_gemini",
+                                                    return_value="Ok.",
+                                                ):
+                                                    with patch.object(
+                                                        DiscoveryOrchestrator,
+                                                        "_update_meaningful_timestamp",
+                                                    ):
+                                                        mock_lifecycle = MagicMock()
+                                                        mock_lifecycle.asked_keys = set()
+                                                        mock_lifecycle.answered_keys = set()
+                                                        mock_lifecycle.current_focus_key = current_focus_key
+                                                        mock_lifecycle.load_state = lambda pid: None
+                                                        mock_lifecycle.mark_asked = lambda pid, k: mock_lifecycle.asked_keys.add(k)
+                                                        mock_lifecycle.mark_answered = lambda pid, k: mock_lifecycle.answered_keys.add(k)
+                                                        MockLifecycle.return_value = mock_lifecycle
+
+                                                        MockSession.return_value.get_session.return_value = {
+                                                            "id": "sess-1",
+                                                            "project_id": project_id,
+                                                            "state": "clarifying_core_requirements",
+                                                            "current_focus_key": current_focus_key,
+                                                            "focus_attempt_count": 1,
+                                                        }
+
+                                                        MockChecklist.return_value.get_checklist.return_value = checklist
+                                                        mock_update_item = MockChecklist.return_value.update_item
+
+                                                        MockChat.return_value.save_message.return_value = {"id": "msg-1", "content": message}
+                                                        MockChat.return_value.detect_repo_url.return_value = repo_url
+                                                        MockChat.return_value.is_meaningful_message.return_value = True
+
+                                                        MockExtractor.return_value.extract.return_value = extraction
+
+                                                        MockReadiness.return_value.quick_readiness_check.return_value = {
+                                                            "status": "not_ready",
+                                                            "coverage": 0.2,
+                                                        }
+                                                        MockSelector.return_value.select.return_value = "product_goal"
+                                                        MockProgress.return_value.compute_progress.return_value = {}
+
+                                                        orch = DiscoveryOrchestrator()
+                                                        orch.handle_user_message(project_id, message)
+
+                                                        return {
+                                                            "update_item": mock_update_item,
+                                                            "lifecycle": mock_lifecycle,
+                                                            "trigger_repo": mock_trigger,
+                                                        }
+
+    def test_no_project_name_advances_with_fallback(self):
+        """User does not know project name ('não sei', 'ainda não definimos'); flow advances with fallback."""
+        from app.discovery.orchestrator import PROJECT_NAME_FALLBACK
+
+        project_id = "proj-no-name"
+        checklist = [
+            {"key": "project_name", "status": "missing", "priority": "high"},
+            {"key": "product_goal", "status": "missing", "priority": "high"},
+        ]
+        extraction = {"updates": [], "answered_keys": []}  # no project_name in answer
+
+        out = self._run_handle_user_message(
+            project_id=project_id,
+            message="não sei",
+            current_focus_key="project_name",
+            checklist=checklist,
+            extraction=extraction,
+            repo_url=None,
+        )
+        update_item = out["update_item"]
+        lifecycle = out["lifecycle"]
+
+        # Fallback applied
+        calls = [c for c in update_item.call_args_list if c[1].get("key") == "project_name"]
+        assert len(calls) >= 1, "project_name should be updated with fallback"
+        fallback_call = next((c for c in calls if c[1].get("value") == PROJECT_NAME_FALLBACK), None)
+        assert fallback_call is not None, f"expected project_name value={PROJECT_NAME_FALLBACK!r}"
+        assert "project_name" in lifecycle.answered_keys
+
+    def test_repo_absent_persisted_no_ingestion(self):
+        """User says 'não tenho' repo; repo_exists → value=absent, lifecycle answered, no ingestion."""
+        from app.discovery.orchestrator import REPO_ABSENT_VALUE
+
+        project_id = "proj-no-repo"
+        checklist = [
+            {"key": "repo_exists", "status": "missing", "priority": "high"},
+            {"key": "product_goal", "status": "missing", "priority": "high"},
+        ]
+        extraction = {"updates": [], "answered_keys": []}
+
+        out = self._run_handle_user_message(
+            project_id=project_id,
+            message="não tenho",
+            current_focus_key="repo_exists",
+            checklist=checklist,
+            extraction=extraction,
+            repo_url=None,
+        )
+        update_item = out["update_item"]
+        lifecycle = out["lifecycle"]
+        trigger_repo = out["trigger_repo"]
+
+        calls = [c for c in update_item.call_args_list if c[1].get("key") == "repo_exists"]
+        assert len(calls) >= 1
+        repo_call = next((c for c in calls if c[1].get("value") == REPO_ABSENT_VALUE), None)
+        assert repo_call is not None, f"expected repo_exists value={REPO_ABSENT_VALUE!r}"
+        assert "repo_exists" in lifecycle.answered_keys
+        trigger_repo.assert_not_called()
+
+    def test_repo_present_but_url_missing_not_resolved(self):
+        """User says 'sim, tenho'; repo not marked resolved; no ingestion; next stays repo_exists until URL."""
+        project_id = "proj-repo-no-url"
+        checklist = [
+            {"key": "repo_exists", "status": "missing", "priority": "high"},
+            {"key": "product_goal", "status": "missing", "priority": "high"},
+        ]
+        extraction = {"updates": [{"key": "repo_exists", "status": "confirmed", "value": ""}], "answered_keys": ["repo_exists"]}
+
+        out = self._run_handle_user_message(
+            project_id=project_id,
+            message="sim, tenho",
+            current_focus_key="repo_exists",
+            checklist=checklist,
+            extraction=extraction,
+            repo_url=None,
+        )
+        lifecycle = out["lifecycle"]
+        trigger_repo = out["trigger_repo"]
+
+        # Sufficiency is PARTIAL for "sim, tenho" without URL → we don't mark answered from extraction and don't set absent
+        assert "repo_exists" not in lifecycle.answered_keys
+        trigger_repo.assert_not_called()
+
+    def test_valid_repo_url_resolved_and_ingestion_triggered(self):
+        """User sends valid GitHub URL; repo_exists confirmed with URL; lifecycle answered; ingestion triggered."""
+        project_id = "proj-with-repo"
+        url = "https://github.com/user/myapp"
+        checklist = [
+            {"key": "repo_exists", "status": "missing", "priority": "high"},
+            {"key": "product_goal", "status": "missing", "priority": "high"},
+        ]
+        extraction = {"updates": [], "answered_keys": []}
+
+        out = self._run_handle_user_message(
+            project_id=project_id,
+            message=f"aqui: {url}",
+            current_focus_key="repo_exists",
+            checklist=checklist,
+            extraction=extraction,
+            repo_url=url,
+        )
+        update_item = out["update_item"]
+        lifecycle = out["lifecycle"]
+        trigger_repo = out["trigger_repo"]
+
+        calls = [c for c in update_item.call_args_list if c[1].get("key") == "repo_exists"]
+        assert len(calls) >= 1
+        url_call = next((c for c in calls if c[1].get("value") == url), None)
+        assert url_call is not None, f"expected repo_exists value={url!r}"
+        assert "repo_exists" in lifecycle.answered_keys
+        trigger_repo.assert_called_once_with(project_id, url)
 
 
 if __name__ == "__main__":

@@ -109,6 +109,10 @@ def evaluate_heuristic(
     if not msg:
         return NOT_ANSWERED
 
+    # project_name: optional and non-blocking — always sufficient so we never get stuck (before ambiguous)
+    if intent_key == "project_name":
+        return SUFFICIENT
+
     # Global ambiguous → never sufficient
     if _match_any(msg, AMBIGUOUS_PHRASES):
         return AMBIGUOUS

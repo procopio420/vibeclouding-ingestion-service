@@ -139,3 +139,24 @@ class TestOrchestratorSufficiencyIntegration:
         outcome = evaluate_heuristic("product_goal", "é um sistema", repo_url=None)
         assert outcome == PARTIAL
         assert not is_sufficient(outcome)
+
+    def test_vague_product_goal_ambiguous(self):
+        """Vague product goal ('não sei', etc.) is ambiguous; assistant can re-ask until resolved."""
+        with patch("app.discovery.sufficiency.evaluate_with_ai") as mock_ai:
+            out = evaluate("product_goal", "não sei", repo_url=None)
+            assert out == AMBIGUOUS
+            mock_ai.assert_not_called()
+        # Concrete answer later can be sufficient (AI or heuristic)
+        out_sufficient = evaluate_heuristic(
+            "product_goal",
+            "Software de gestão de uma fábrica de artefatos de cimento",
+            repo_url=None,
+        )
+        assert out_sufficient in (SUFFICIENT, PARTIAL, NEED_AI)
+
+    def test_project_name_always_sufficient(self):
+        """project_name is always sufficient so flow advances (name or fallback)."""
+        out = evaluate_heuristic("project_name", "não sei", repo_url=None)
+        assert out == SUFFICIENT
+        out2 = evaluate_heuristic("project_name", "ainda não definimos", repo_url=None)
+        assert out2 == SUFFICIENT

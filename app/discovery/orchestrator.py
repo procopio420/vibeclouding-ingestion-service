@@ -21,6 +21,11 @@ from app.discovery.sufficiency import evaluate as evaluate_sufficiency, is_suffi
 
 logger = logging.getLogger(__name__)
 
+# Repo state: value stored in checklist when user confirms they do not have a repo
+REPO_ABSENT_VALUE = "absent"
+# Fallback when user does not provide a project name (optional, non-blocking)
+PROJECT_NAME_FALLBACK = "Projeto em descoberta"
+
 BOOTSTRAP_QUESTIONS = [
     "O que seu projeto faz? Pode descrever qual problema ele resolve?",
     "Você já tem um repositório no GitHub para ele?",
@@ -195,6 +200,21 @@ class DiscoveryOrchestrator:
             except Exception as e:
                 logger.warning(f"[Discovery] {project_id} - Failed to mark answered: {e}")
         
+        # project_name: optional and non-blocking — if no name in answer, set fallback and advance
+        if current_focus_key == "project_name" and is_sufficient(sufficiency_outcome):
+            applied = checklist_updates.get("project_name", {})
+            if not applied.get("value") or not str(applied.get("value", "")).strip():
+                self.checklist_service.update_item(
+                    project_id=project_id,
+                    key="project_name",
+                    status="confirmed",
+                    value=PROJECT_NAME_FALLBACK,
+                    evidence="fallback (name not provided)",
+                )
+                lifecycle.mark_asked(project_id, "project_name")
+                lifecycle.mark_answered(project_id, "project_name")
+                logger.info(f"[Discovery] {project_id} - project_name fallback applied")
+        
         if repo_url:
             self._trigger_repo_ingestion(project_id, repo_url)
             lifecycle.mark_asked(project_id, "repo_exists")
@@ -207,6 +227,18 @@ class DiscoveryOrchestrator:
                     value=repo_url,
                     evidence="repo URL provided",
                 )
+        elif current_focus_key == "repo_exists" and is_sufficient(sufficiency_outcome):
+            # User said they do not have a repo — persist absent state, do not ask for URL
+            lifecycle.mark_asked(project_id, "repo_exists")
+            lifecycle.mark_answered(project_id, "repo_exists")
+            self.checklist_service.update_item(
+                project_id=project_id,
+                key="repo_exists",
+                status="confirmed",
+                value=REPO_ABSENT_VALUE,
+                evidence="user confirmed no repo",
+            )
+            logger.info(f"[Discovery] {project_id} - repo_exists set to absent")
         
         checklist = self.checklist_service.get_checklist(project_id)
         
