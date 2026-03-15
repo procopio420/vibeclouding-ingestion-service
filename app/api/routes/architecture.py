@@ -10,7 +10,7 @@ from app.repositories.architecture_result_repo import (
     ArchitectureResultRepository,
     parse_architecture_result,
 )
-from app.services.architecture_trigger_service import ArchitectureTriggerService
+from app.services.architecture_agent_service import ArchitectureAgentService
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ async def start_architecture(project_id: str):
 
     Requires: readiness in (maybe_ready, ready_for_architecture), repo linked,
     architecture not already triggered, no architecture result yet.
-    Sends webhook to n8n and persists trigger state.
+    Runs the internal architecture agent and persists the result (no external webhook).
     """
     session = get_session()
     try:
@@ -40,13 +40,16 @@ async def start_architecture(project_id: str):
     if not discovery_session:
         raise HTTPException(status_code=404, detail="Discovery session not found")
 
-    result = ArchitectureTriggerService.trigger(project_id)
+    result = ArchitectureAgentService.generate(project_id)
 
     if result.get("skipped") or not result.get("success"):
-        error = result.get("error", "Not eligible")
+        error = result.get("error", "Not eligible for architecture")
+        # Eligibility / already-done -> 400; generation or persist failure -> 500
+        if any(x in error.lower() for x in ("context", "generation", "save", "failed")):
+            raise HTTPException(status_code=500, detail=error)
         raise HTTPException(status_code=400, detail=error)
 
-    return {"success": True, "message": "Architecture started"}
+    return {"success": True, "message": "Architecture generated"}
 
 
 @router.post("/projects/{project_id}/architecture-result", response_model=ArchitectureResultResponse)

@@ -1,7 +1,6 @@
-"""Tests for architecture trigger service."""
+"""Tests for architecture trigger service (eligibility only; generation is in ArchitectureAgentService)."""
 import pytest
 import uuid
-from unittest.mock import patch, MagicMock
 from datetime import datetime
 
 from app.services.architecture_trigger_service import ArchitectureTriggerService
@@ -9,7 +8,7 @@ from app.db import get_session, DiscoverySessionModel, ProjectModel, ChecklistIt
 
 
 class TestArchitectureTriggerService:
-    """Tests for ArchitectureTriggerService."""
+    """Tests for ArchitectureTriggerService.is_eligible (no webhook)."""
 
     @pytest.fixture
     def setup_project_and_session(self):
@@ -135,128 +134,3 @@ class TestArchitectureTriggerService:
             session.close()
 
         assert ArchitectureTriggerService.is_eligible(project_id) is True
-
-    @patch('app.services.architecture_trigger_service.requests.post')
-    def test_trigger_sends_webhook(self, mock_post, setup_project_and_session):
-        """Test that trigger sends webhook successfully."""
-        project_id, _ = setup_project_and_session
-        self._add_repo_url(project_id)
-
-        session = get_session()
-        try:
-            discovery_session = session.query(DiscoverySessionModel).filter(
-                DiscoverySessionModel.project_id == project_id
-            ).first()
-            discovery_session.readiness_status = "ready_for_architecture"
-            session.commit()
-        finally:
-            session.close()
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.text = "OK"
-        mock_post.return_value = mock_response
-
-        result = ArchitectureTriggerService.trigger(project_id)
-
-        assert result["success"] is True
-        mock_post.assert_called_once()
-        call_payload = mock_post.call_args[1]["json"]
-        assert call_payload.get("event_type") == "project.architecture.requested"
-        assert call_payload.get("project_id") == project_id
-        assert "occurred_at" in call_payload
-        assert "context_url" in call_payload
-        assert call_payload.get("repo_url") == "https://github.com/example/repo"
-
-    @patch('app.services.architecture_trigger_service.requests.post')
-    def test_trigger_idempotent(self, mock_post, setup_project_and_session):
-        """Test that trigger is idempotent - doesn't send twice."""
-        project_id, _ = setup_project_and_session
-        self._add_repo_url(project_id)
-
-        session = get_session()
-        try:
-            discovery_session = session.query(DiscoverySessionModel).filter(
-                DiscoverySessionModel.project_id == project_id
-            ).first()
-            discovery_session.readiness_status = "ready_for_architecture"
-            discovery_session.architecture_triggered = True
-            discovery_session.architecture_triggered_at = datetime.utcnow()
-            session.commit()
-        finally:
-            session.close()
-
-        result = ArchitectureTriggerService.trigger(project_id)
-
-        assert result["success"] is False
-        assert result.get("skipped") is True
-        mock_post.assert_not_called()
-
-    @patch('app.services.architecture_trigger_service.requests.post')
-    def test_trigger_updates_db_fields(self, mock_post, setup_project_and_session):
-        """Test that trigger updates DB fields correctly."""
-        project_id, _ = setup_project_and_session
-        self._add_repo_url(project_id)
-
-        session = get_session()
-        try:
-            discovery_session = session.query(DiscoverySessionModel).filter(
-                DiscoverySessionModel.project_id == project_id
-            ).first()
-            discovery_session.readiness_status = "ready_for_architecture"
-            session.commit()
-        finally:
-            session.close()
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.text = "OK"
-        mock_post.return_value = mock_response
-
-        ArchitectureTriggerService.trigger(project_id)
-
-        session = get_session()
-        try:
-            discovery_session = session.query(DiscoverySessionModel).filter(
-                DiscoverySessionModel.project_id == project_id
-            ).first()
-            assert discovery_session.architecture_triggered is True
-            assert discovery_session.eligible_for_architecture is True
-            assert discovery_session.architecture_trigger_status == "success"
-            assert discovery_session.architecture_triggered_at is not None
-            assert discovery_session.architecture_trigger_target is not None
-            assert discovery_session.architecture_started_by == "manual_button"
-        finally:
-            session.close()
-
-    @patch('app.services.architecture_trigger_service.requests.post')
-    def test_trigger_handles_webhook_failure(self, mock_post, setup_project_and_session):
-        """Test that trigger handles webhook failure gracefully."""
-        project_id, _ = setup_project_and_session
-        self._add_repo_url(project_id)
-
-        session = get_session()
-        try:
-            discovery_session = session.query(DiscoverySessionModel).filter(
-                DiscoverySessionModel.project_id == project_id
-            ).first()
-            discovery_session.readiness_status = "ready_for_architecture"
-            session.commit()
-        finally:
-            session.close()
-
-        mock_response = MagicMock()
-        mock_response.status_code = 500
-        mock_response.text = "Internal Server Error"
-        mock_post.return_value = mock_response
-
-        result = ArchitectureTriggerService.trigger(project_id)
-
-        assert result["success"] is False
-        assert "500" in result.get("error", "")
-
-    def test_trigger_if_eligible_convenience(self, setup_project_and_session):
-        """Test the convenience method trigger_if_eligible."""
-        project_id, _ = setup_project_and_session
-        result = ArchitectureTriggerService.trigger_if_eligible(project_id)
-        assert result.get("skipped") is True

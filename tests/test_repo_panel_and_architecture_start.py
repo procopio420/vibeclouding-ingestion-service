@@ -182,31 +182,33 @@ class TestRepoUrlDetectionAndWebSocket:
 
 
 class TestStartArchitectureEndpoint:
-    """Scenario 4 — manual start sends webhook, persists; Scenario 5 — duplicate prevented."""
+    """Manual start runs internal agent and persists; duplicate prevented; no webhook."""
 
-    @patch("app.services.architecture_trigger_service.requests.post")
-    def test_post_start_architecture_sends_webhook_and_persists(self, mock_post):
-        """POST start-architecture sends webhook with correct payload and persists."""
+    @patch("app.repositories.architecture_result_repo.get_storage_adapter")
+    @patch("app.services.architecture_agent_service.get_consolidated_context")
+    def test_post_start_architecture_runs_internal_agent_and_persists(self, mock_get_context, mock_storage):
+        """POST start-architecture runs internal agent, persists result, no webhook."""
         project_id, _ = _make_project_and_session(
             readiness="maybe_ready",
             repo_url="https://github.com/example/repo",
         )
         try:
-            mock_post.return_value = MagicMock(status_code=200, text="OK")
+            mock_get_context.return_value = {
+                "project_id": project_id,
+                "project_name": "Test",
+                "repo_url": "https://github.com/example/repo",
+                "overview": {},
+                "stack": {},
+                "components": [],
+            }
+            mock_storage.return_value = MagicMock()
+            mock_storage.return_value.store.return_value = "r2://bucket/arch.json"
 
             resp = client.post(f"/projects/{project_id}/start-architecture")
             assert resp.status_code == 200
             data = resp.json()
             assert data["success"] is True
             assert "message" in data
-
-            assert mock_post.called
-            payload = mock_post.call_args[1]["json"]
-            assert payload["event_type"] == "project.architecture.requested"
-            assert payload["project_id"] == project_id
-            assert "occurred_at" in payload
-            assert "context_url" in payload
-            assert payload["repo_url"] == "https://github.com/example/repo"
 
             session = get_session()
             try:
@@ -219,11 +221,18 @@ class TestStartArchitectureEndpoint:
                 assert ds.architecture_started_by == "manual_button"
             finally:
                 session.close()
+
+            get_resp = client.get(f"/projects/{project_id}/architecture-result")
+            assert get_resp.status_code == 200
+            result = get_resp.json()
+            assert "analise_entrada" in result
+            assert "vibe_economica" in result
+            assert "vibe_performance" in result
         finally:
             _teardown(project_id)
 
     def test_post_start_architecture_already_triggered_returns_400(self):
-        """Already triggered: 400, no duplicate webhook."""
+        """Already triggered: 400, no duplicate run."""
         project_id, _ = _make_project_and_session(
             readiness="ready_for_architecture",
             repo_url="https://github.com/example/repo",
@@ -240,10 +249,8 @@ class TestStartArchitectureEndpoint:
             session.close()
 
         try:
-            with patch("app.services.architecture_trigger_service.requests.post") as mock_post:
-                resp = client.post(f"/projects/{project_id}/start-architecture")
-                assert resp.status_code == 400
-                mock_post.assert_not_called()
+            resp = client.post(f"/projects/{project_id}/start-architecture")
+            assert resp.status_code == 400
         finally:
             _teardown(project_id)
 
@@ -275,9 +282,8 @@ class TestStartArchitectureEndpoint:
         finally:
             _teardown(project_id)
 
-    @patch("app.services.architecture_trigger_service.requests.post")
-    def test_post_start_architecture_already_has_result_returns_400(self, mock_post):
-        """Architecture result already exists: 400, no duplicate webhook."""
+    def test_post_start_architecture_already_has_result_returns_400(self):
+        """Architecture result already exists: 400."""
         project_id, _ = _make_project_and_session(
             readiness="ready_for_architecture",
             repo_url="https://github.com/example/repo",
@@ -300,6 +306,5 @@ class TestStartArchitectureEndpoint:
         try:
             resp = client.post(f"/projects/{project_id}/start-architecture")
             assert resp.status_code == 400
-            mock_post.assert_not_called()
         finally:
             _teardown(project_id)
