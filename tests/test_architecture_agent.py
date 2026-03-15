@@ -100,8 +100,11 @@ def test_architecture_agent_success_returns_expected_shape_and_persists(
     assert "descricao" in payload["vibe_economica"]
     assert "custo_estimado" in payload["vibe_economica"]
     assert "recursos" in payload["vibe_economica"]
+    assert "relationships" in payload["vibe_economica"]
+    assert all("id" in r for r in payload["vibe_economica"]["recursos"])
     assert "descricao" in payload["vibe_performance"]
     assert "recursos" in payload["vibe_performance"]
+    assert "relationships" in payload["vibe_performance"]
 
     # Persisted
     session = get_session()
@@ -214,12 +217,44 @@ def test_normalize_payload_handles_malformed_vibes():
     assert out["analise_entrada"] == "ok"
     assert out["vibe_economica"]["descricao"] == ""
     assert out["vibe_economica"]["recursos"] == []
+    assert out["vibe_economica"]["relationships"] == []
     assert out["vibe_performance"]["descricao"] == "x"
     assert out["vibe_performance"]["custo_estimado"] == "y"
+    assert out["vibe_performance"]["relationships"] == []
 
 
-def test_heuristic_generate_always_returns_valid_contract():
-    """Heuristic generator returns the expected contract shape."""
+def test_normalize_vibe_preserves_relationships_and_ids():
+    """Raw vibe with relationships and id on recursos normalizes to from/to/type and keeps ids."""
+    raw = {
+        "analise_entrada": "summary",
+        "vibe_economica": {
+            "descricao": "eco",
+            "custo_estimado": "low",
+            "recursos": [
+                {"id": "a", "servico": "Compute", "config": {}},
+                {"id": "b", "servico": "DB", "config": {}},
+            ],
+            "relationships": [
+                {"from": "a", "to": "b", "type": "calls"},
+            ],
+        },
+        "vibe_performance": {
+            "descricao": "perf",
+            "recursos": [{"servico": "LB", "config": {}}],
+            "relacionamentos": [{"de": "r0", "para": "r1", "tipo": "chama"}],
+        },
+    }
+    out = _normalize_payload(raw)
+    assert out["vibe_economica"]["recursos"][0]["id"] == "a"
+    assert out["vibe_economica"]["recursos"][1]["id"] == "b"
+    assert out["vibe_economica"]["relationships"] == [{"from": "a", "to": "b", "type": "calls"}]
+    # vibe_performance: id assigned r0; relacionamentos normalized to from/to/type (r0->r1 but we only have one recurso so r1 missing - normalizer still outputs the rel)
+    assert out["vibe_performance"]["recursos"][0]["id"] == "r0"
+    assert out["vibe_performance"]["relationships"] == [{"from": "r0", "to": "r1", "type": "chama"}]
+
+
+def test_heuristic_generate_has_ids_and_relationships():
+    """Heuristic output includes id on each recurso and non-empty relationships referencing them."""
     ctx = {"project_id": "p1", "project_name": "P", "repo_url": "https://x"}
     out = _heuristic_generate(ctx)
     assert "analise_entrada" in out
@@ -227,4 +262,33 @@ def test_heuristic_generate_always_returns_valid_contract():
     assert "vibe_performance" in out
     assert "descricao" in out["vibe_economica"]
     assert "recursos" in out["vibe_economica"]
+    assert "relationships" in out["vibe_economica"]
     assert isinstance(out["vibe_economica"]["recursos"], list)
+    for r in out["vibe_economica"]["recursos"]:
+        assert "id" in r
+        assert r["id"] in ("r0", "r1")
+    assert len(out["vibe_economica"]["relationships"]) > 0
+    assert out["vibe_economica"]["relationships"][0]["from"] in ("r0", "r1")
+    assert out["vibe_economica"]["relationships"][0]["to"] in ("r0", "r1")
+    assert "type" in out["vibe_economica"]["relationships"][0]
+    for r in out["vibe_performance"]["recursos"]:
+        assert "id" in r
+    assert len(out["vibe_performance"]["relationships"]) > 0
+
+
+def test_normalize_payload_backward_compatible_no_relationships():
+    """Payload without relationships and without id on recursos gets default relationships and generated ids."""
+    raw = {
+        "analise_entrada": "ok",
+        "vibe_economica": {
+            "descricao": "d",
+            "custo_estimado": "c",
+            "recursos": [{"servico": "S1", "config": {}}, {"servico": "S2", "config": {}}],
+        },
+        "vibe_performance": {"descricao": "d2", "custo_estimado": "c2", "recursos": []},
+    }
+    out = _normalize_payload(raw)
+    assert out["vibe_economica"]["relationships"] == []
+    assert out["vibe_economica"]["recursos"][0]["id"] == "r0"
+    assert out["vibe_economica"]["recursos"][1]["id"] == "r1"
+    assert out["vibe_performance"]["relationships"] == []

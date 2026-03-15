@@ -13,13 +13,30 @@ from app.services.context_aggregator import get_consolidated_context
 logger = logging.getLogger(__name__)
 
 
+def _normalize_relationship(entry: Any) -> Optional[Dict[str, Any]]:
+    """Normalize a single relationship to { from, to, type? }."""
+    if not isinstance(entry, dict):
+        return None
+    from_id = entry.get("from") or entry.get("de")
+    to_id = entry.get("to") or entry.get("para")
+    if from_id is None or to_id is None:
+        return None
+    rel_type = entry.get("type") or entry.get("tipo") or ""
+    return {
+        "from": str(from_id),
+        "to": str(to_id),
+        "type": str(rel_type) if rel_type else "",
+    }
+
+
 def _normalize_vibe(raw: Any) -> Dict[str, Any]:
-    """Ensure vibe has descricao, custo_estimado, recursos (list of {servico, config})."""
+    """Ensure vibe has descricao, custo_estimado, recursos (with id), relationships."""
     if not raw or not isinstance(raw, dict):
         return {
             "descricao": "",
             "custo_estimado": "",
             "recursos": [],
+            "relationships": [],
         }
     descricao = raw.get("descricao")
     if descricao is None:
@@ -29,16 +46,30 @@ def _normalize_vibe(raw: Any) -> Dict[str, Any]:
     if not isinstance(recursos, list):
         recursos = []
     normalized_recursos = []
-    for r in recursos:
+    for i, r in enumerate(recursos):
         if isinstance(r, dict):
+            recurso_id = r.get("id")
+            if not recurso_id:
+                recurso_id = f"r{i}"
             normalized_recursos.append({
+                "id": str(recurso_id),
                 "servico": r.get("servico") or r.get("service", ""),
                 "config": r.get("config") or r.get("configuration", {}),
             })
+    # relationships: accept "relationships" or "relacionamentos", normalize to from/to/type
+    raw_rels = raw.get("relationships") or raw.get("relacionamentos", [])
+    if not isinstance(raw_rels, list):
+        raw_rels = []
+    relationships = []
+    for entry in raw_rels:
+        rel = _normalize_relationship(entry)
+        if rel:
+            relationships.append(rel)
     return {
         "descricao": str(descricao) if descricao else "",
         "custo_estimado": str(custo_estimado) if custo_estimado else "",
         "recursos": normalized_recursos,
+        "relationships": relationships,
     }
 
 
@@ -94,24 +125,31 @@ def _heuristic_generate(context: Dict[str, Any]) -> Dict[str, Any]:
         parts.append(part)
     analise_entrada = " | ".join(parts) if parts else "Contexto carregado; sem detalhes adicionais."
 
-    # vibe_economica: cost-conscious option
+    # vibe_economica: cost-conscious option (compute -> database)
     vibe_economica = {
         "descricao": "Opção econômica com foco em custo inicial reduzido e pay-as-you-grow.",
         "custo_estimado": "Variável; estimativa inicial baixa com escalonamento conforme uso.",
         "recursos": [
-            {"servico": "Compute serverless ou container (ex: Lambda/Cloud Run)", "config": {"scale_to_zero": True}},
-            {"servico": "Banco gerenciado pequeno (ex: RDS/SQL menor instância)", "config": {"instance": "small"}},
+            {"id": "r0", "servico": "Compute serverless ou container (ex: Lambda/Cloud Run)", "config": {"scale_to_zero": True}},
+            {"id": "r1", "servico": "Banco gerenciado pequeno (ex: RDS/SQL menor instância)", "config": {"instance": "small"}},
+        ],
+        "relationships": [
+            {"from": "r0", "to": "r1", "type": "calls"},
         ],
     }
 
-    # vibe_performance: performance-oriented option
+    # vibe_performance: performance-oriented option (lb -> instances -> db; lb -> cdn)
     vibe_performance = {
         "descricao": "Opção orientada a performance e escalabilidade.",
         "custo_estimado": "Maior que a econômica; adequada para carga e latência previsíveis.",
         "recursos": [
-            {"servico": "Load balancer + instâncias dedicadas ou Kubernetes", "config": {"ha": True}},
-            {"servico": "Banco com réplicas e cache (ex: RDS + ElastiCache)", "config": {"replicas": True}},
-            {"servico": "CDN e cache de conteúdo", "config": {"edge_caching": True}},
+            {"id": "r0", "servico": "Load balancer + instâncias dedicadas ou Kubernetes", "config": {"ha": True}},
+            {"id": "r1", "servico": "Banco com réplicas e cache (ex: RDS + ElastiCache)", "config": {"replicas": True}},
+            {"id": "r2", "servico": "CDN e cache de conteúdo", "config": {"edge_caching": True}},
+        ],
+        "relationships": [
+            {"from": "r0", "to": "r1", "type": "calls"},
+            {"from": "r0", "to": "r2", "type": "delivers"},
         ],
     }
 
@@ -136,8 +174,9 @@ def _try_llm_generate(context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 Regras:
 - analise_entrada: string em português resumindo o que foi detectado (tipo de projeto, stack, componentes).
-- vibe_economica: objeto com descricao (string), custo_estimado (string), recursos (array de objetos com servico e config).
+- vibe_economica: objeto com descricao (string), custo_estimado (string), recursos (array de objetos com id string, servico, config), relationships (array de { from: id, to: id, type?: string } entre recursos).
 - vibe_performance: mesmo formato que vibe_economica, focado em performance/escalabilidade.
+- Em recursos, use ids estáveis (ex: r0, r1). Em relationships, from e to devem ser ids de recursos.
 
 Retorne APENAS o JSON, sem markdown ou texto extra.
 
