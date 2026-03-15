@@ -63,6 +63,8 @@ async def websocket_discovery(
                 "checklist": state["checklist"],
                 "readiness": state["readiness"],
                 "questions": state["questions"],
+                "understanding_summary": state.get("understanding_summary", {"items": []}),
+                "next_best_step": state.get("next_best_step"),
             }
         })
         

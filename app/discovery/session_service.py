@@ -148,7 +148,9 @@ class DiscoverySessionService:
                 elif not trigger_result.get("skipped"):
                     logger.warning(f"Architecture trigger failed for project {project_id}: {trigger_result.get('error')}")
             
-            return self._session_to_dict(discovery_session)
+            out = self._session_to_dict(discovery_session)
+            out["state_transition"] = {"old_state": old_state, "new_state": new_state}
+            return out
         except Exception as e:
             session.rollback()
             logger.error(f"Failed to update discovery state: {e}")

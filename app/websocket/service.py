@@ -9,6 +9,7 @@ from app.discovery.checklist_service import ChecklistService
 from app.discovery.question_service import QuestionService
 from app.discovery.chat_service import ChatService
 from app.discovery.readiness_service import DiscoveryReadinessService
+from app.discovery.panel_state import build_understanding_summary, compute_next_best_step
 from app.websocket.schemas import ServerEventType
 from app.websocket.assistant_runner import assistant_runner
 
@@ -41,12 +42,17 @@ class DiscoveryWebSocketService:
                 project_id, checklist, questions
             )
         
+        understanding_summary = build_understanding_summary(project_id)
+        next_best_step = compute_next_best_step(project_id, {})
+        
         return {
             "session": session or {},
             "messages": messages,
             "checklist": checklist,
             "readiness": readiness,
             "questions": questions,
+            "understanding_summary": understanding_summary,
+            "next_best_step": next_best_step,
         }
     
     async def start_session(
@@ -125,6 +131,19 @@ class DiscoveryWebSocketService:
             orchestrator=self.orchestrator,
         ):
             await send_event(event.to_dict())
+        
+        # Emit fresh state updates after assistant response completes
+        try:
+            checklist = self.checklist_service.get_checklist(project_id)
+            await self._send_checklist_delta(send_event, checklist)
+            
+            questions = self.question_service.get_open_questions(project_id)
+            readiness = self.readiness_service.quick_readiness_check(
+                project_id, checklist, questions
+            )
+            await self._send_readiness_delta(send_event, readiness)
+        except Exception as e:
+            logger.error(f"[WebSocket] Failed to emit state after message: {e}")
     
     async def handle_checklist_update(
         self,

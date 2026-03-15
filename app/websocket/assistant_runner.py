@@ -152,7 +152,27 @@ class AssistantRunner:
                     "next_best_step": result.get("next_best_step"),
                 }
             )
-            
+            # Emit session.state_changed when discovery state transitioned
+            state_transition = result.get("state_transition")
+            if state_transition:
+                yield StreamEvent(
+                    ServerEventType.SESSION_STATE_CHANGED,
+                    {
+                        "old_state": state_transition.get("old_state", ""),
+                        "new_state": state_transition.get("new_state", ""),
+                    }
+                )
+            # Emit question.asked for each newly created clarification question
+            for q in result.get("questions_created") or []:
+                yield StreamEvent(
+                    ServerEventType.QUESTION_ASKED,
+                    {
+                        "id": q.get("id", ""),
+                        "question": q.get("question", ""),
+                        "priority": q.get("priority"),
+                        "reason": q.get("reason"),
+                    }
+                )
             yield StreamEvent(
                 ServerEventType.RUN_STATUS,
                 {"run_id": run_id, "status": "completed"}

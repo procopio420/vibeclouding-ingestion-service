@@ -202,16 +202,17 @@ class DiscoveryOrchestrator:
             logger.info(f"[Discovery] {project_id} - selected next_key: {next_key}, turn: {turn_count}")
             
             progress = self.progress.compute_progress(checklist, quick_result)
-            
+            state_transition = None
             if quick_result["status"] == "maybe_ready":
                 full_result = self.readiness_service.full_readiness_check(project_id, checklist)
-                self._maybe_update_state(project_id, session, checklist, full_result)
+                state_transition = self._maybe_update_state(project_id, session, checklist, full_result)
             elif quick_result["status"] == "ready_for_architecture":
                 full_result = self.readiness_service.full_readiness_check(project_id, checklist)
-                self._maybe_update_state(project_id, session, checklist, full_result)
+                state_transition = self._maybe_update_state(project_id, session, checklist, full_result)
             else:
-                self._maybe_update_state(project_id, session, checklist, quick_result)
+                state_transition = self._maybe_update_state(project_id, session, checklist, quick_result)
         else:
+            state_transition = None
             quick_result = self.readiness_service.quick_readiness_check(project_id, checklist)
         
         response_text = self._generate_response_with_gemini(
@@ -264,6 +265,8 @@ class DiscoveryOrchestrator:
             "lifecycle": lifecycle_snapshot,
             "next_key": lifecycle.current_focus_key,
             "turn": turn_count,
+            "state_transition": state_transition if is_meaningful else None,
+            "questions_created": [],
         }
     
     def _update_meaningful_timestamp(self, project_id: str) -> None:
@@ -301,26 +304,34 @@ class DiscoveryOrchestrator:
             return ""
     
     def _maybe_update_state(
-        self, 
-        project_id: str, 
-        session: Dict, 
+        self,
+        project_id: str,
+        session: Dict,
         checklist: List[Dict],
         readiness: Dict
-    ) -> None:
-        """Update discovery state based on current progress."""
+    ) -> Optional[Dict[str, str]]:
+        """Update discovery state based on current progress.
+        Returns state_transition dict (old_state, new_state) when a transition occurred, else None.
+        """
         current_state = session["state"]
         readiness_status = readiness.get("status", "not_ready") if isinstance(readiness, dict) else "not_ready"
-        
+        state_transition = None
+
         if current_state == "ingesting_sources":
-            self.session_service.update_state(project_id, "clarifying_core_requirements")
-        
+            out = self.session_service.update_state(project_id, "clarifying_core_requirements")
+            state_transition = out.get("state_transition") if out else None
         elif current_state in ["clarifying_core_requirements", "merging_context"]:
             if readiness_status == "ready_for_architecture":
-                self.session_service.update_state(project_id, "ready_for_architecture")
+                out = self.session_service.update_state(project_id, "ready_for_architecture")
+                state_transition = out.get("state_transition") if out else None
             elif readiness_status == "maybe_ready":
-                self.session_service.update_state(project_id, "merging_context")
+                out = self.session_service.update_state(project_id, "merging_context")
+                state_transition = out.get("state_transition") if out else None
             else:
-                self.session_service.update_state(project_id, "clarifying_core_requirements")
+                out = self.session_service.update_state(project_id, "clarifying_core_requirements")
+                state_transition = out.get("state_transition") if out else None
+
+        return state_transition
     
     def _generate_initial_response(self, project_id: str, session: Dict) -> str:
         """Generate initial response with bootstrap questions."""
