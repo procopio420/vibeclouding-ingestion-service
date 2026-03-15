@@ -21,10 +21,10 @@ from app.api.routes import discovery_ws as discovery_ws_routes
 
 app = FastAPI(title="PDD Phase 1 - Ingestion & Normalization (Skeleton)")
 
-# CORS middleware - allow all origins for WebSocket compatibility
+# CORS middleware - allow specific origins for WebSocket compatibility
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:8081", "http://localhost:3000", "*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
