@@ -109,7 +109,11 @@ Regras:
             # If all parsing fails, return None to trigger heuristic fallback
             logger.warning("[AnswerExtractor] Gemini parsing failed, using heuristic fallback")
             return None
-    
+        
+        except Exception as e:
+            logger.warning(f"[AnswerExtractor] Gemini extraction error: {e}")
+            return None
+
     def _parse_json_response(self, response: str, checklist: List[Dict]) -> Optional[Dict[str, Any]]:
         """Parse JSON from Gemini response with robust fallbacks."""
         import re
@@ -171,10 +175,6 @@ Regras:
             "remaining_gaps": [k.get("key") for k in checklist if k.get("status") == "missing" and k.get("key") not in answered_keys],
             "next_best_question_key": answered_keys[0] if answered_keys else None,
         }
-                
-        except Exception as e:
-            logger.warning(f"[AnswerExtractor] Gemini extraction error: {e}")
-            return None
 
     def _extract_with_heuristics(
         self, 
