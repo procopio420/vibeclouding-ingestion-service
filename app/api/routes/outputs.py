@@ -327,6 +327,11 @@ async def get_activity(project_id: str) -> Dict[str, Any]:
     except Exception:
         pass
 
-    # Sort by timestamp if available
-    events.sort(key=lambda e: (e.get("timestamp") or ""))
+    # Sort by timestamp if available (normalize to string so datetime and str never compare)
+    def _ts_sort_key(e):
+        ts = e.get("timestamp")
+        if ts is None:
+            return ""
+        return getattr(ts, "isoformat", lambda: str(ts))()
+    events.sort(key=_ts_sort_key)
     return {"events": events}
