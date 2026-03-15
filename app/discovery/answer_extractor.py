@@ -14,6 +14,199 @@ from app.discovery.answer_extraction_parser import (
 logger = logging.getLogger(__name__)
 
 
+class _Heuristics:
+    """Heuristic extraction methods."""
+    
+    @staticmethod
+    def extract_with_heuristics(
+        user_message: str, 
+        checklist: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Heuristic-based extraction as fallback."""
+        text = (user_message or "").strip().lower()
+        original_text = user_message or ""
+        
+        updates = []
+        answered_keys = []
+        
+        # Check for explicit project name FIRST (before generic patterns)
+        # ONLY extract if explicitly named
+        project_name_patterns = [
+            r"(?:it's|called|name is|project name is|o projeto se chama|chama-se|nome do projeto)[:\s]+([A-Za-z][A-Za-z0-9\s]{2,30})",
+            r"^([A-Z][a-zA-Z0-9\s]{2,30})$",  # Single capitalized word at start
+        ]
+        
+        for pattern in project_name_patterns:
+            match = re.search(pattern, original_text, re.IGNORECASE)
+            if match:
+                potential_name = match.group(1).strip()
+                # Verify it's NOT a generic description
+                generic_terms = ["software", "sistema", "gestão", "management", "app", "application", "plataforma"]
+                if potential_name.lower() not in generic_terms and len(potential_name) > 2:
+                    updates.append({
+                        "key": "project_name",
+                        "status": "confirmed",
+                        "value": potential_name,
+                        "confidence": 0.9,
+                        "evidence": f"explicit name: {potential_name}"
+                    })
+                    answered_keys.append("project_name")
+                    break
+        
+        # Check for repo URL
+        repo_url_patterns = [
+            r'https?://github\.com/[\w-]+/[\w.-]+(?:\.git)?',
+            r'https?://gitlab\.com/[\w-]+/[\w.-]+(?:\.git)?',
+            r'https?://bitbucket\.org/[\w-]+/[\w.-]+(?:\.git)?',
+            r'git@github\.com:[\w-]+/[\w.-]+\.git',
+            r'git@gitlab\.com:[\w-]+/[\w.-]+\.git',
+        ]
+        for pattern in repo_url_patterns:
+            match = re.search(pattern, original_text, re.IGNORECASE)
+            if match:
+                url = match.group(0)
+                if url.endswith('.git'):
+                    url = url[:-4]
+                updates.append({
+                    "key": "repo_exists",
+                    "status": "confirmed",
+                    "value": url,
+                    "confidence": 0.95,
+                    "evidence": "repo URL detected"
+                })
+                answered_keys.append("repo_exists")
+                break
+        if "repo_exists" not in answered_keys:
+            yes_patterns = [r'\byes\b', r'\byeah\b', r'\byep\b', r'\bsure\b', r'\bsim\b', r'\btenho\b', r'\btemos\b']
+            no_patterns = [r'\bno\b', r'\bnope\b', r'\bnão\b', r'\bnao\b', r'\bnot yet\b', r'\bainda não\b', r"\bdon'?t have\b"]
+            for p in yes_patterns:
+                if re.search(p, text):
+                    updates.append({
+                        "key": "repo_exists",
+                        "status": "confirmed",
+                        "value": "user confirmed they have a repo",
+                        "confidence": 0.8,
+                        "evidence": "explicit yes response"
+                    })
+                    answered_keys.append("repo_exists")
+                    break
+            if "repo_exists" not in answered_keys:
+                for p in no_patterns:
+                    if re.search(p, text):
+                        updates.append({
+                            "key": "repo_exists",
+                            "status": "missing",
+                            "value": "user confirmed no repo yet",
+                            "confidence": 0.9,
+                            "evidence": "explicit no response"
+                        })
+                        answered_keys.append("repo_exists")
+                        break
+        
+        # Build keyword -> checklist key mapping
+        keyword_mappings = {
+            "product_goal": {
+                "keywords": ["projeto", "sistema", "software", "app", "plataforma", "desenvolver", "criar", "construir", "ideia", "problema", "resolve", "automatizar", "gestão", "management"],
+                "inferred": ["plataforma", "sistema"]
+            },
+            "target_users": {
+                "keywords": ["usuários", "users", "clientes", "pessoas", "profissionais", "empresa", "negócio", "loja", "comerciantes", "produtores", "consumidores", "alvos"],
+                "inferred": ["b2b", "b2c"]
+            },
+            "entry_channels": {
+                "keywords": ["celular", "mobile", "app", "navegador", "browser", "web", "whatsapp", "chatbot", "api", "acesso"],
+                "inferred": ["mobile-first", "web app"]
+            },
+            "application_type": {
+                "keywords": ["site", "website", "aplicativo", "app", "mobile", "web", "sistema web", "plataforma", "chatbot", "api", "backend"],
+                "inferred": ["web app", "pwa"]
+            },
+            "core_components": {
+                "keywords": ["cadastro", "login", "painel", "admin", "dashboard", "pedidos", "produtos", "catálogo", "pagamento", "checkout", "relatórios"],
+                "inferred": ["crud", "admin panel"]
+            },
+            "database": {
+                "keywords": ["banco", "database", "postgres", "mysql", "sql", "dados", "armazenar", "persistir"],
+                "inferred": ["postgresql"]
+            },
+            "auth_model": {
+                "keywords": ["login", "autenticação", "auth", "senha", "usuário", "conta", "oauth", "jwt", "sessão"],
+                "inferred": ["user auth"]
+            },
+            "external_integrations": {
+                "keywords": ["whatsapp", "stripe", "pagamento", "payment", "email", "sendgrid", "api", "integração", "webhook", "zapier"],
+                "inferred": ["payment gateway"]
+            },
+            "file_storage": {
+                "keywords": ["arquivo", "imagem", "foto", "upload", "storage", "s3", "armazenamento", "documento", "pdf"],
+                "inferred": ["s3", "file upload"]
+            },
+            "background_processing": {
+                "keywords": ["background", "fila", "queue", "worker", "cron", "agendado", "automático", "processamento", "notificação", "email"],
+                "inferred": ["async", "queue"]
+            },
+            "traffic_expectation": {
+                "keywords": ["tráfego", "traffic", "usuários", "Users", "escala", "scale", "muitos", "poucos", "grande", "pequeno"],
+                "inferred": ["high traffic", "low traffic"]
+            },
+            "availability_requirement": {
+                "keywords": ["disponibilidade", "availability", "uptime", "24/7", "sempre", "fora do ar", "queda"],
+                "inferred": ["high availability"]
+            },
+            "cost_priority": {
+                "keywords": ["custo", "cost", "barato", "econômico", "orçamento", "investimento", "caro"],
+                "inferred": ["low cost"]
+            },
+            "compliance_or_sensitive_data": {
+                "keywords": ["lgpd", "dados pessoais", "sensível", "cpf", "cnpj", "cartão", "payment", "financeiro", "documento", "privacidade", "criptografia"],
+                "inferred": ["pii", "gdpr"]
+            },
+        }
+        
+        for key, pattern in keyword_mappings.items():
+            keywords = pattern.get("keywords", [])
+            inferred = pattern.get("inferred", [])
+            
+            # Check explicit keywords first
+            for kw in keywords:
+                if kw.lower() in text:
+                    updates.append({
+                        "key": key,
+                        "status": "inferred",
+                        "value": original_text[:300],
+                        "confidence": 0.7,
+                        "evidence": f"keyword: {kw}"
+                    })
+                    answered_keys.append(key)
+                    break
+            else:
+                # Check inferred keywords
+                for kw in inferred:
+                    if kw.lower() in text:
+                        updates.append({
+                            "key": key,
+                            "status": "inferred",
+                            "value": original_text[:300],
+                            "confidence": 0.6,
+                            "evidence": f"inferred keyword: {kw}"
+                        })
+                        answered_keys.append(key)
+                        break
+        
+        remaining_gaps = [
+            k.get("key") for k in checklist 
+            if k.get("status") == "missing" and k.get("key") not in answered_keys
+        ]
+        
+        return {
+            "updates": updates,
+            "answered_keys": answered_keys,
+            "conflicts": [],
+            "remaining_gaps": remaining_gaps,
+            "next_best_question_key": answered_keys[0] if answered_keys else (remaining_gaps[0] if remaining_gaps else None),
+        }
+
+
 class AnswerExtractor:
     """Extract structured updates from a user message using Gemini.
 
@@ -118,300 +311,7 @@ class AnswerExtractor:
         checklist: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
         """Heuristic-based extraction as fallback."""
-        from app.discovery.answer_extraction_parser import _Heuristics
-        return _Heuristics.extract_with_heuristics(self, user_message, checklist)
-
-
-# Parser is now in separate module - kept for backwards compatibility
-from app.discovery.answer_extraction_parser import safe_parse_compact_response, normalize_compact_response
-
-
-class _Heuristics:
-    """Heuristic extraction methods kept for backwards compatibility."""
-    
-    @staticmethod
-    def extract_with_heuristics(
-        self, 
-        user_message: str, 
-        checklist: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """Heuristic-based extraction as fallback.
-        
-        Uses keyword patterns to detect which checklist items were addressed.
-        """
-        text = (user_message or "").strip().lower()
-        original_text = user_message or ""
-        
-        updates = []
-        answered_keys = []
-        
-        # Check for explicit project name FIRST (before generic patterns)
-        # ONLY extract if explicitly named
-        project_name_patterns = [
-            r"(?:it's|called|name is|project name is|o projeto se chama|chama-se|nome do projeto)[:\s]+([A-Za-z][A-Za-z0-9\s]{2,30})",
-            r"^([A-Z][a-zA-Z0-9\s]{2,30})$",  # Single capitalized word at start
-        ]
-        
-        for pattern in project_name_patterns:
-            match = re.search(pattern, original_text, re.IGNORECASE)
-            if match:
-                potential_name = match.group(1).strip()
-                # Verify it's NOT a generic description
-                generic_terms = ["software", "sistema", "gestão", "management", "app", "application", "plataforma"]
-                if not any(term in potential_name.lower() for term in generic_terms):
-                    updates.append({
-                        "key": "project_name",
-                        "status": "confirmed",
-                        "value": potential_name,
-                        "confidence": 0.9,
-                        "evidence": f"explicit name: {potential_name}"
-                    })
-                    answered_keys.append("project_name")
-                    break
-        
-        # Check for repo URL first (before generic patterns)
-        repo_url_patterns = [
-            r'https?://github\.com/[\w-]+/[\w.-]+(?:\.git)?',
-            r'https?://gitlab\.com/[\w-]+/[\w.-]+(?:\.git)?',
-            r'https?://bitbucket\.org/[\w-]+/[\w.-]+(?:\.git)?',
-            r'git@github\.com:[\w-]+/[\w.-]+\.git',
-            r'git@gitlab\.com:[\w-]+/[\w.-]+\.git',
-        ]
-        
-        for pattern in repo_url_patterns:
-            match = re.search(pattern, original_text, re.IGNORECASE)
-            if match:
-                url = match.group(0)
-                if url.endswith('.git'):
-                    url = url[:-4]
-                updates.append({
-                    "key": "repo_exists",
-                    "status": "confirmed",
-                    "value": url,
-                    "confidence": 0.95,
-                    "evidence": "repo URL detected"
-                })
-                answered_keys.append("repo_exists")
-                break
-        
-        # Check for explicit yes/no to repo question
-        # This only triggers if NOT already detected a URL
-        if "repo_exists" not in answered_keys:
-            yes_patterns = [r'\byes\b', r'\byeah\b', r'\byep\b', r'\bsure\b', r'\bsim\b', r'\btenho\b', r'\btemos\b']
-            no_patterns = [r'\bno\b', r'\bnope\b', r'\bnão\b', r'\bnao\b', r'\bnot yet\b', r'\bainda não\b', r"\bdon'?t have\b"]
-            
-            for pattern in yes_patterns:
-                if re.search(pattern, text):
-                    updates.append({
-                        "key": "repo_exists",
-                        "status": "confirmed",
-                        "value": "user confirmed they have a repo",
-                        "confidence": 0.8,
-                        "evidence": "explicit yes response"
-                    })
-                    answered_keys.append("repo_exists")
-                    break
-            
-            if "repo_exists" not in answered_keys:
-                for pattern in no_patterns:
-                    if re.search(pattern, text):
-                        updates.append({
-                            "key": "repo_exists",
-                            "status": "missing",  # Explicit no = confirmed missing
-                            "value": "user confirmed no repo yet",
-                            "confidence": 0.9,
-                            "evidence": "explicit no response"
-                        })
-                        answered_keys.append("repo_exists")
-                        break
-        
-        # Keyword patterns for each checklist key
-        # Format: key -> {confirmed: [...], inferred: [...]}
-        patterns = {
-            "product_goal": {
-                "confirmed": [
-                    # English
-                    "software", "system", "platform", "application", "manage", "managing",
-                    "build", "building", "create", "develop", "making",
-                    # Portuguese - extended
-                    "software de", "sistema de", "gestão de", "plataforma", 
-                    "fazemos", "produzimos", "vendemos", "gestão", "fábrica",
-                    "postes", "manilhas", "concreto", "artefatos",
-                    "é um", "são", "gostaria de criar", "preciso de", "precisamos de",
-                    "para gerenciar", "para controlar", "para automatizar",
-                    "sistema interno", "sistema para", "plataforma para",
-                ],
-                "inferred": [
-                    "project", "business", "company", "startup", "empresa"
-                ],
-            },
-            "target_users": {
-                "confirmed": [
-                    # English
-                    "customers", "clients", "users", "b2b", "b2c", "employees",
-                    "selling to", "sell to", "stores", "businesses", "market",
-                    # Portuguese - extended
-                    "clientes", "lojas", "empresas", "vendemos para", "para lojas",
-                    "b2b", "b2c", "consumidores",
-                    "para empresa", "para clientes", "para funcionários", "nossos clientes",
-                    "vendido para", "卖给", "funcionários", "colaboradores",
-                    "usuários usam", "usuários utilizam", "pessoas usam",
-                ],
-                "inferred": [
-                    "people", "people who", "target"
-                ],
-            },
-            "application_type": {
-                "confirmed": [
-                    # English
-                    "web app", "mobile app", "api", "chatbot", "website", "web application",
-                    "mobile application", "saas", "software as a service", "platform",
-                    # Portuguese - extended
-                    "aplicativo", "app móvil", "app móvel", "sistema", "plataforma",
-                    "loja virtual", "e-commerce", "site", "plataforma web",
-                    "sistema interno", "sistema web", "sistema mobile",
-                    "plataforma online", "app web", "aplicação web",
-                ],
-                "inferred": [
-                    "online", "digital", "computer", "desktop"
-                ],
-            },
-            "entry_channels": {
-                "confirmed": [
-                    # English
-                    "mobile", "cellphone", "smartphone", "whatsapp", "telegram",
-                    "browser", "web browser", "website", "login", "access via",
-                    "ios", "android", "app store", "play store",
-                    # Portuguese - extended
-                    "mobile app", "app móvel", "celular", "whatsapp", "navegador",
-                    "site", "web", "computador", "relatório", "relatorios",
-                    "pelos funcionários", "pelos usuários", "acesso via",
-                    "utilizado por", "via mobile", "via web",
-                    "computador para relatório", "mobile no dia a dia",
-                ],
-                "inferred": [
-                    "channel", "access", "through"
-                ],
-            },
-            "core_components": {
-                "confirmed": [
-                    "components", "features", "modules", "main functions", "main features",
-                    "parts", "funções principais", "módulos", "componentes"
-                ],
-                "inferred": [
-                    "functions", "capabilities", "capabilities"
-                ],
-            },
-            "database": {
-                "confirmed": [
-                    "database", "postgresql", "mysql", "mongodb", "sql", "store data",
-                    "persist", "banco de dados", "sql", "mysql", "postgresql"
-                ],
-                "inferred": [
-                    "data storage", "save data"
-                ],
-            },
-            "auth_model": {
-                "confirmed": [
-                    "login", "log in", "authentication", "password", "oauth",
-                    "sign in", "user account", "users need to log", "cadastro",
-                    "autenticação", "login", "senha"
-                ],
-                "inferred": [
-                    "require login", "must log in"
-                ],
-            },
-            "external_integrations": {
-                "confirmed": [
-                    "integrations", "api integration", "whatsapp", "payment", "stripe",
-                    "email", "maps", "integration", "integração", "whatsapp"
-                ],
-                "inferred": [
-                    "connect to", "integrate with", "external"
-                ],
-            },
-            "file_storage": {
-                "confirmed": [
-                    "file storage", "images", "documents", "upload", "s3", "storage",
-                    "arquivos", "imagens", "upload", "armazenamento"
-                ],
-                "inferred": [
-                    "store files", "upload files"
-                ],
-            },
-            "traffic_expectation": {
-                "confirmed": [
-                    "users", "traffic", "scale", "scalability", "million", "thousand",
-                    "many users", "high traffic", "users initially"
-                ],
-                "inferred": [
-                    "grow", "growth"
-                ],
-            },
-            "cost_priority": {
-                "confirmed": [
-                    "cost", "cheap", "expensive", "budget", "low cost", "high cost",
-                    "custo", "preço", "barato", "orçamento"
-                ],
-                "inferred": [
-                    "price", "affordable"
-                ],
-            },
-        }
-        
-        for item in checklist:
-            if item.get("status") != "missing":
-                continue
-                
-            key = item.get("key")
-            if not key:
-                continue
-            
-            # Skip keys we've already handled
-            if key in answered_keys:
-                continue
-            
-            if key in patterns:
-                pattern = patterns[key]
-                
-                # Check confirmed keywords first
-                for kw in pattern.get("confirmed", []):
-                    if kw.lower() in text:
-                        updates.append({
-                            "key": key,
-                            "status": "confirmed",
-                            "value": original_text[:300],
-                            "confidence": 0.85,
-                            "evidence": f"keyword: {kw}"
-                        })
-                        answered_keys.append(key)
-                        break
-                else:
-                    # Check inferred keywords
-                    for kw in pattern.get("inferred", []):
-                        if kw.lower() in text:
-                            updates.append({
-                                "key": key,
-                                "status": "inferred",
-                                "value": original_text[:300],
-                                "confidence": 0.6,
-                                "evidence": f"inferred keyword: {kw}"
-                            })
-                            answered_keys.append(key)
-                            break
-        
-        remaining_gaps = [
-            k.get("key") for k in checklist 
-            if k.get("status") == "missing" and k.get("key") not in answered_keys
-        ]
-        
-        return {
-            "updates": updates,
-            "answered_keys": answered_keys,
-            "conflicts": [],
-            "remaining_gaps": remaining_gaps,
-            "next_best_question_key": answered_keys[0] if answered_keys else (remaining_gaps[0] if remaining_gaps else None),
-        }
+        return _Heuristics.extract_with_heuristics(user_message, checklist)
 
 
 __all__ = ["AnswerExtractor"]
