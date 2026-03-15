@@ -274,6 +274,7 @@ def generate_chat(api_key: str, prompt: str, system_instruction: str = None) -> 
     
     generation_config = {
         "temperature": 0.7,
+        "maxOutputTokens": 8000,
     }
     
     def is_response_complete(text: str) -> bool:

@@ -1,16 +1,17 @@
 """Compact JSON contract for discovery extraction.
 
 Minimizes token usage for free-tier Gemini models.
+Uses short codes for field names to reduce output tokens.
 
 Contract format:
 {
-    "u": [["key1", "value1"], ["key2", "value2"], ...],
-    "n": "next_intent_key"
+    "u": [["code", "value"], ...],
+    "n": "code"
 }
 
 Where:
-- u = updates (list of [key, value] pairs)
-- n = next best intent key to ask about
+- u = updates (list of [short_code, value] pairs)
+- n = next best intent (short code)
 """
 
 from typing import Dict, List, Any
@@ -19,40 +20,53 @@ from typing import Dict, List, Any
 COMPACT_KEY_U = "u"
 COMPACT_KEY_N = "n"
 
+# Short codes for discovery keys (reduces LLM output tokens)
+KEY_TO_SHORT: Dict[str, str] = {
+    "application_type": "at",
+    "target_users": "tu",
+    "product_goal": "pg",
+    "repo_exists": "re",
+    "entry_channels": "ec",
+    "core_components": "cc",
+    "database": "db",
+    "auth_model": "am",
+    "external_integrations": "ei",
+    "file_storage": "fs",
+    "cache_or_queue": "cq",
+    "background_processing": "bp",
+    "traffic_expectation": "te",
+    "availability_requirement": "ar",
+    "cost_priority": "cp",
+    "compliance_or_sensitive_data": "cs",
+    "project_name": "pn",
+}
+SHORT_TO_KEY: Dict[str, str] = {v: k for k, v in KEY_TO_SHORT.items()}
+
 
 def build_compact_prompt(checklist_items: List[Dict[str, Any]], user_message: str) -> str:
     """Build a minimal prompt for Gemini extraction.
-    
-    Args:
-        checklist_items: List of checklist items with keys and labels
-        user_message: The user's message to extract from
-    
-    Returns:
-        Compact prompt string in Portuguese
+    Uses short codes for keys to minimize output tokens.
     """
-    # Build minimal checklist - only keys
     missing_keys = [item.get("key", "") for item in checklist_items if item.get("status") == "missing"]
-    keys_str = ", ".join(missing_keys[:8])  # Limit to 8 items to reduce prompt size
-    
-    prompt = f"""Extrator minimalista.
+    codes_str = ", ".join(f"{KEY_TO_SHORT.get(k, k)}={k}" for k in missing_keys[:10])
 
-Responda APENAS com JSON válido, sem markdown, sem explicações.
+    prompt = f"""Extrator minimalista. Use APENAS os códigos curtos nas chaves.
 
 Mensagem: "{user_message}"
 
-Responda:
-{{"u": [["chave", "valor"], ...], "n": "proxima_pergunta"}}
+Responda só JSON válido, sem markdown:
+{{"u": [["codigo", "valor"], ...], "n": "codigo"}}
 
-chaves disponíveis: {keys_str}
+Códigos disponíveis: {codes_str}
 
 Regras:
-- u: lista de [chave, valor] das informações nuevas
-- n: próxima pergunta (uma das chaves disponíveis)
-- se não detectou nada, use u vazio: "u": []
-- só inclua o que o usuário abordar
-- valor: resumo curto do que disse
+- u: lista de [código, valor] do que o usuário disse
+- n: próxima pergunta (um dos códigos acima)
+- Use só os códigos (pg, tu, re, at, ec, cc, db, etc), não o nome completo
+- Se não detectou nada: "u": []
+- valor: resumo curto
 
-Exemplo: {{"u": [["product_goal", "Sistema para vendas"], ["target_users", "Produtores"]], "n": "repo_exists"}}"""
+Exemplo: {{"u": [["pg", "Sistema para vendas"], ["tu", "Produtores"]], "n": "re"}}"""
 
     return prompt
 
@@ -94,7 +108,9 @@ Resposta (2-3 frases, conversacional):"""
 
 __all__ = [
     "COMPACT_KEY_U",
-    "COMPACT_KEY_N", 
+    "COMPACT_KEY_N",
+    "KEY_TO_SHORT",
+    "SHORT_TO_KEY",
     "build_compact_prompt",
-    "build_compact_prompt_for_chat"
+    "build_compact_prompt_for_chat",
 ]

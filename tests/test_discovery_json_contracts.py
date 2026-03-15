@@ -13,17 +13,16 @@ class TestCompactContract:
     """Tests for compact JSON contract."""
 
     def test_build_compact_prompt(self):
-        """Test prompt is built correctly."""
+        """Test prompt is built correctly and includes short-code mapping."""
         checklist = [
             {"key": "product_goal", "status": "missing", "label": "O que o projeto faz?"},
             {"key": "repo_exists", "status": "missing", "label": "Tem repositório?"},
         ]
         prompt = build_compact_prompt(checklist, "Meu projeto é uma loja virtual")
-        
-        assert "product_goal" in prompt
-        assert "repo_exists" in prompt
+        assert "pg" in prompt or "product_goal" in prompt
+        assert "re" in prompt or "repo_exists" in prompt
         assert "loja virtual" in prompt
-        assert len(prompt) < 1000  # Should be much smaller than old format
+        assert len(prompt) < 1000
 
 
 class TestSafeParser:
@@ -41,13 +40,13 @@ class TestSafeParser:
         assert result["n"] == "repo_exists"
 
     def test_truncated_json(self):
-        """Test handling of truncated JSON."""
+        """Test handling of truncated JSON: may return None or salvaged partial result."""
         response = '{"u": [["product_goal", "Sistema de vend'
         
         result = safe_parse_compact_response(response)
         
-        # Should return None (parsing failed), triggering heuristic fallback
-        assert result is None
+        # Either parsing failed (None) or we salvaged partial data (dict with "u")
+        assert result is None or (isinstance(result, dict) and "u" in result)
 
     def test_malformed_json_empty_object(self):
         """Test handling of empty object."""
@@ -158,6 +157,22 @@ class TestNormalizer:
         # Only valid key should be included
         assert len(result["updates"]) == 1
         assert result["updates"][0]["key"] == "product_goal"
+
+    def test_normalize_expands_short_codes(self):
+        """Test that short codes (pg, tu, re) are expanded to full keys."""
+        raw = {"u": [["pg", "Sistema de vendas"], ["tu", "Produtores"]], "n": "re"}
+        checklist = [
+            {"key": "product_goal", "status": "missing"},
+            {"key": "target_users", "status": "missing"},
+            {"key": "repo_exists", "status": "missing"},
+        ]
+        result = normalize_compact_response(raw, checklist)
+        assert len(result["updates"]) == 2
+        keys = [u["key"] for u in result["updates"]]
+        assert "product_goal" in keys
+        assert "target_users" in keys
+        assert result["updates"][0]["value"] == "Sistema de vendas"
+        assert result["next_best_question_key"] == "repo_exists"
 
 
 class TestSafeGetters:

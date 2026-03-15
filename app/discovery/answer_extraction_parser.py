@@ -8,7 +8,7 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-from app.discovery.answer_extraction_contract import COMPACT_KEY_U, COMPACT_KEY_N
+from app.discovery.answer_extraction_contract import COMPACT_KEY_U, COMPACT_KEY_N, SHORT_TO_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -81,10 +81,61 @@ def safe_parse_compact_response(response: str) -> Optional[Dict[str, Any]]:
                 return result
     except (json.JSONDecodeError, AttributeError) as e:
         logger.debug(f"[Parser] Bracket matching failed: {e}")
-    
+
+    # Strategy 5: Repair truncated-at-end (append missing ] and })
+    try:
+        text = response.strip()
+        if text and text[-1] not in (']', '}', '"'):
+            open_square = text.count('[') - text.count(']')
+            open_curly = text.count('{') - text.count('}')
+            if open_square > 0 or open_curly > 0:
+                repaired = text + (']' * open_square) + ('}' * open_curly)
+                result = json.loads(repaired)
+                if isinstance(result, dict):
+                    logger.info("[Parser] Parsed successfully via truncation repair (end)")
+                    return result
+    except (json.JSONDecodeError, AttributeError) as e:
+        logger.debug(f"[Parser] Truncation repair failed: {e}")
+
+    # Strategy 6: Salvage from fragment (extract complete ["k","v"] pairs and "n":"key")
+    salvaged = _salvage_compact_from_fragment(response)
+    if salvaged is not None:
+        logger.info("[Parser] Parsed successfully via fragment salvage")
+        return salvaged
+
     # All strategies failed
     logger.warning(f"[Parser] All parsing strategies failed. Response: {response[:200]}...")
     return None
+
+
+def _salvage_compact_from_fragment(response: str) -> Optional[Dict[str, Any]]:
+    """Extract a minimal compact object from truncated/malformed response.
+    Looks for ["key", "value"] or ["short_code", "value"] and "n": "key" or "n": "code".
+    """
+    if not response or not response.strip():
+        return None
+    text = response.strip()
+    # Find all ["key_or_code", "value"] pairs (value may contain escaped " or be truncated)
+    pairs: List[Tuple[str, str]] = []
+    # Match ["xxx", "yyy"] with yyy possibly empty or containing text
+    for m in re.finditer(r'\[\s*"([^"]+)"\s*,\s*"([^"]*)"\s*\]', text):
+        key_or_code, value = m.group(1).strip(), m.group(2).strip()
+        if key_or_code:
+            pairs.append((key_or_code, value))
+    # Also match ["xxx", " with no closing so value is truncated - skip or take empty
+    for m in re.finditer(r'\[\s*"([^"]+)"\s*,\s*"', text):
+        key_or_code = m.group(1).strip()
+        if key_or_code and not any(p[0] == key_or_code for p in pairs):
+            pairs.append((key_or_code, ""))
+    # Find "n": "next_key_or_code"
+    next_match = re.search(r'"n"\s*:\s*"([^"]+)"', text)
+    next_key = next_match.group(1).strip() if next_match else None
+    if not pairs and not next_key:
+        return None
+    return {
+        COMPACT_KEY_U: [[k, v] for k, v in pairs],
+        COMPACT_KEY_N: next_key or "",
+    }
 
 
 def normalize_compact_response(
@@ -141,7 +192,9 @@ def normalize_compact_response(
         key, value = _extract_key_value(entry)
         if not key:
             continue
-        
+        # Expand short code to full key (e.g. pg -> product_goal)
+        key = SHORT_TO_KEY.get(key, key)
+
         # Validate key is in checklist
         if key not in valid_keys:
             logger.debug(f"[Normalizer] Skipping invalid key: {key}")
@@ -158,7 +211,7 @@ def normalize_compact_response(
         updates.append(update)
         answered_keys.append(key)
     
-    # Extract next key (may be missing or malformed)
+    # Extract next key (may be missing or malformed); expand short code to full key
     next_key = None
     try:
         if isinstance(raw, dict):
@@ -167,6 +220,8 @@ def normalize_compact_response(
                 next_key = next_key.strip()
             elif next_key:
                 next_key = str(next_key)
+            if next_key:
+                next_key = SHORT_TO_KEY.get(next_key, next_key)
     except Exception as e:
         logger.warning(f"[Normalizer] Failed to extract 'n' field: {e}")
     
