@@ -16,6 +16,7 @@ from app.discovery.answer_extractor import AnswerExtractor
 from app.discovery.question_selector import QuestionSelector
 from app.discovery.question_lifecycle_service import QuestionLifecycleService
 from app.discovery.progress_summary_service import ProgressSummaryService
+from app.discovery.natural_language_mapper import NaturalLanguageMapper
 
 logger = logging.getLogger(__name__)
 
@@ -119,36 +120,56 @@ class DiscoveryOrchestrator:
         
         logger.info(f"[Discovery] {project_id} - extraction result: {extraction}")
         
+        # Use safe extraction handling to prevent crashes on malformed data
+        from app.discovery.answer_extraction_parser import safe_get_updates, safe_get_answered_keys
+        
         checklist_updates = {}
         # Build set of valid keys for safety check
         valid_keys = {item.get("key") for item in checklist if item.get("key")}
         
-        for upd in extraction.get("updates", []) or []:
-            key = upd.get("key")
-            if not key:
+        # Safe extraction - won't crash on bool/string/None
+        for upd in safe_get_updates(extraction):
+            try:
+                # Safely extract key - handle any type
+                if not isinstance(upd, dict):
+                    logger.warning(f"[Discovery] {project_id} - Skipping invalid update (not a dict): {type(upd)}")
+                    continue
+                
+                key = upd.get("key")
+                if not key:
+                    continue
+                
+                # Safety check: skip items that don't exist in checklist
+                if key not in valid_keys:
+                    logger.warning(f"[Discovery] {project_id} - Skipping update for non-existent checklist item: {key}")
+                    continue
+                
+                # Safely get values with defaults
+                status = upd.get("status") if isinstance(upd.get("status"), str) else "inferred"
+                value = upd.get("value") if upd.get("value") is not None else ""
+                evidence = upd.get("evidence") if isinstance(upd.get("evidence"), str) else ""
+                
+                self.checklist_service.update_item(
+                    project_id=project_id,
+                    key=key,
+                    status=status,
+                    value=value,
+                    evidence=evidence,
+                )
+                checklist_updates[key] = {"status": status, "value": value, "evidence": evidence}
+                # Mark as asked and answered in lifecycle
+                lifecycle.mark_asked(project_id, key)
+                lifecycle.mark_answered(project_id, key)
+            except Exception as e:
+                logger.warning(f"[Discovery] {project_id} - Failed to process update: {e}")
                 continue
-            
-            # Safety check: skip items that don't exist in checklist
-            if key not in valid_keys:
-                logger.warning(f"[Discovery] {project_id} - Skipping update for non-existent checklist item: {key}")
-                continue
-            
-            self.checklist_service.update_item(
-                project_id=project_id,
-                key=key,
-                status=upd.get("status", "inferred"),
-                value=upd.get("value"),
-                evidence=upd.get("evidence"),
-            )
-            checklist_updates[key] = {"status": upd.get("status", "inferred"), "value": upd.get("value"), "evidence": upd.get("evidence")}
-            # Mark as asked and answered in lifecycle
-            lifecycle.mark_asked(project_id, key)
-            lifecycle.mark_answered(project_id, key)
         
-        # Also mark any explicitly answered keys
-        answered_keys = extraction.get("answered_keys", [])
-        for k in answered_keys:
-            lifecycle.mark_answered(project_id, k)
+        # Also mark any explicitly answered keys (safe extraction)
+        for k in safe_get_answered_keys(extraction):
+            try:
+                lifecycle.mark_answered(project_id, k)
+            except Exception as e:
+                logger.warning(f"[Discovery] {project_id} - Failed to mark answered: {e}")
         
         if repo_url:
             self._trigger_repo_ingestion(project_id, repo_url)
@@ -368,9 +389,10 @@ class DiscoveryOrchestrator:
     ) -> str:
         """Build prompt for Gemini."""
         if is_initial:
-            return f"""Você é um assistente técnico de descoberta que ajuda o usuário a definir seu projeto.
+            return f"""Você é um assistente técnico de descoberta que ajuda pessoas a definir seus projetos.
 
 IMPORTANTE: Responda SEMPRE em português brasileiro (pt-BR).
+NUNCA use termos técnicos internos como "core_components", "entry_channels", etc.
 
 Faça perguntas naturais e não-técnicas para entender o projeto. Comece com:
 1. Você tem um repositório no GitHub para o projeto?
@@ -381,39 +403,64 @@ IMPORTANTE: Pergunte sobre o repositório primeiro se ainda não foi fornecido.
 Mantenha conversacional e friendly. Faça no máximo 1-2 perguntas."""
 
         context_parts = []
+        
+        # Build understanding summary from answered items
+        answered = [c for c in checklist if c.get("status") in ("confirmed", "inferred")]
+        if answered:
+            summary_parts = []
+            for item in answered[:5]:  # Limit to 5 items
+                value = item.get("value") or item.get("label", "")
+                if value and len(str(value)) < 100:
+                    summary_parts.append(f"- {item.get('label', item.get('key', ''))}: {value}")
+            
+            if summary_parts:
+                context_parts.append(f"Informações já coletadas:\n" + "\n".join(summary_parts))
+        
         if repo_url_detected:
-            context_parts.append("O usuário compartilhou uma URL de repositório. Reconheça isso e informe que está analisando.")
+            context_parts.append("O usuário compartilhou uma URL de repositório. Reconheça isso e informe que está analisando o código.")
         
         readiness_status = readiness.get("status", "") if isinstance(readiness, dict) else ""
         
         if readiness_status == "ready_for_architecture":
-            return "Ótimo! Com base na nossa conversa, tenho informações suficientes para ajudar com a arquitetura. Gostaria que eu prossiga com as recomendações de arquitetura?"
-        
-        if readiness_status == "maybe_ready":
-            context_parts.append("O projeto está próximo de ter informações suficientes. Pergunte se há algo mais importante para saber.")
-        
-        # Force asking about the specific next_key if provided (deterministic progression)
-        if next_key:
-            from app.discovery.question_intents import QUESTION_INTENTS
-            next_question = QUESTION_INTENTS.get(next_key, {}).get("question", f"Me conte mais sobre {next_key}")
-            context_parts.append(f"Pergunte especificamente sobre: {next_question}")
-        
-        if high_priority:
-            keys = [c["key"] for c in high_priority[:2]]
-            context_parts.append(f"Abra também se necessário: {', '.join(keys)}")
-        
-        context = " ".join(context_parts) if context_parts else "Continue ajudando o usuário a definir seu projeto."
-        
-        return f"""Você é um assistente técnico de descoberta.
+            return """Você é um assistente técnico de descoberta.
 
 IMPORTANTE: Responda SEMPRE em português brasileiro (pt-BR).
+
+Com base na conversa, o projeto tem informações suficientes para seguir para a fase de arquitetura.
+
+Responda de forma conversacional, confirmando o que entendeu e perguntando se o usuário gostaria de prosseguir para as recomendações de arquitetura.
+
+Exemplo: "Ótimo! Pelo que entendi, [resumo breve do projeto]. Vamos seguir para a arquitetura?" """
+        
+        if readiness_status == "maybe_ready":
+            context_parts.append("O projeto está próximo de ter informações suficientes. Pergunte se há algo mais importante que ainda não covered.")
+
+        # Force asking about the specific next_key using NATURAL language
+        if next_key:
+            natural_question = NaturalLanguageMapper.get_full_question(next_key)
+            context_parts.append(f"Pergunte naturalmente sobre: {natural_question}")
+        
+        # Add inference instruction
+        context_parts.append("IMPORTANTE: INFIRA sempre que possível. Se o usuário mencionar algo que indique uma necessidade (ex: 'vai ter fotos dos produtos' → armazenamento de imagens), já marque isso como identificado e não perguntem novamente.")
+
+        context = "\n\n".join(context_parts) if context_parts else "Continue ajudando o usuário a definir seu projeto de forma conversacional."
+        
+        return f"""Você é um assistente técnico de descoberta que ajuda pessoas a construir seus projetos.
+
+IMPORTANTE: 
+- Responda SEMPRE em português brasileiro (pt-BR)
+- NUNCA exponha termos técnicos internos (como "core_components", "entry_channels", "background_processing") para o usuário
+- Use perguntas naturais e explicativas
+- INFIRA sempre que possível a partir do que o usuário disse
 
 O usuário disse: "{user_message}"
 
 {context}
 
-IMPORTANTE: NÃO faça perguntas amplas que já foram respondidas (como "o que seu projeto faz?" se ele já explicou).
-Mantenha sua resposta curta (2-3 frases), conversacional e não-técnica. Faça uma pergunta de acompanhamento se apropriado."""
+Resposta:
+- Mantenha sua resposta curta (2-3 frases), conversacional e amigável
+- Faça uma pergunta de acompanhamento se apropriado
+- Nunca use termos técnicos internos nas perguntas"""
     
     def _fallback_response(
         self, 
@@ -423,15 +470,17 @@ Mantenha sua resposta curta (2-3 frases), conversacional e não-técnica. Faça 
     ) -> str:
         """Generate a simple fallback response without Gemini."""
         if is_initial:
-            return "Olá! Estou aqui para ajudar a definir seu projeto. O que ele faz? Você tem um repositório?"
+            return "Olá! Estou aqui para ajudar a definir seu projeto. O que ele faz? Você tem um repositório no GitHub?"
         
         if repo_url_detected:
             return "Obrigado por compartilhar o repositório! Estou analisando agora. Enquanto isso, pode me contar mais sobre o que o projeto faz?"
         
-        missing = [c for c in checklist if c["status"] == "missing"]
+        missing = [c for c in checklist if c.get("status") == "missing"]
         if missing:
             next_q = missing[0]
-            return f"{QUESTION_TEMPLATES.get(next_q['key'], 'Pode me contar mais sobre seu projeto?')}"
+            key = next_q.get("key", "")
+            # Use natural language mapper instead of raw templates
+            return NaturalLanguageMapper.get_full_question(key)
         
         return "Entendi! Tenho uma boa visão do seu projeto. Me avise quando quiser prosseguir para a fase de arquitetura."
 

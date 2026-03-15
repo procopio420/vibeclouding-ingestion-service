@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from app.db import get_session, DiscoverySessionModel, ProjectModel
 from app.discovery.state_machine import DiscoveryStateMachine, get_readiness_from_state
+from app.services.architecture_trigger_service import ArchitectureTriggerService
 
 logger = logging.getLogger(__name__)
 
@@ -130,10 +131,22 @@ class DiscoverySessionService:
             
             project = session.query(ProjectModel).filter(ProjectModel.id == project_id).first()
             if project:
-                project.status = new_state
+                readiness = get_readiness_from_state(new_state)
+                if readiness == "ready_for_architecture":
+                    project.status = "discovery_ready"
+                else:
+                    project.status = new_state
             
             session.commit()
             logger.info(f"Transitioned discovery session from {old_state} to {new_state}")
+            
+            readiness = get_readiness_from_state(new_state)
+            if readiness == "ready_for_architecture":
+                trigger_result = ArchitectureTriggerService.trigger_if_eligible(project_id)
+                if trigger_result.get("success"):
+                    logger.info(f"Architecture trigger sent for project {project_id}")
+                elif not trigger_result.get("skipped"):
+                    logger.warning(f"Architecture trigger failed for project {project_id}: {trigger_result.get('error')}")
             
             return self._session_to_dict(discovery_session)
         except Exception as e:

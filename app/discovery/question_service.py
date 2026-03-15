@@ -5,27 +5,14 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from app.db import get_session, ClarificationQuestionModel
+from app.discovery.natural_language_mapper import NaturalLanguageMapper
 
 logger = logging.getLogger(__name__)
 
 
-QUESTION_TEMPLATES = {
-    "product_goal": "O que seu projeto faz? Pode descrever qual problema ele resolve?",
-    "target_users": "Quem são os usuários alvo?",
-    "entry_channels": "Como você espera que os usuários acessem o app? (web, mobile, API, WhatsApp, etc.)",
-    "application_type": "Que tipo de aplicação você está construindo? (web app, mobile, API, chatbot, etc.)",
-    "core_components": "Quais são os principais componentes ou funcionalidades do seu aplicativo?",
-    "database": "Você vai precisar armazenar dados em um banco de dados? Se sim, que tipo de dados?",
-    "cache_or_queue": "Você vai precisar de cache para performance ou filas de mensagens para processamento em background?",
-    "background_processing": "O app vai precisar processar coisas em background?",
-    "external_integrations": "Vai conectar com APIs externas como WhatsApp, pagamentos, mapas ou email?",
-    "auth_model": "Os usuários vão precisar fazer login? Qual método de autenticação?",
-    "file_storage": "Você vai precisar armazenar arquivos, imagens ou documentos?",
-    "traffic_expectation": "Quantos usuários você espera inicialmente? É um protótipo rápido ou algo que precisa escalar?",
-    "availability_requirement": "É aceitável o app ficar fora do ar por alguns minutos, ou precisa de alta disponibilidade?",
-    "cost_priority": "O que é mais importante agora - manter custos baixos ou construir para escalar?",
-    "compliance_or_sensitive_data": "Seu aplicativo lida com dados sensíveis ou tem requisitos de conformidade?",
-}
+# These templates are now generated from NaturalLanguageMapper
+# Kept here for backwards compatibility
+QUESTION_TEMPLATES = {key: NaturalLanguageMapper.get_question(key) for key in NaturalLanguageMapper.get_all_keys()}
 
 
 class QuestionService:

@@ -191,7 +191,12 @@ def persist_consolidated(project_id: str, context: Dict[str, Any]) -> str:
 
 
 def get_consolidated_context(project_id: str) -> Dict[str, Any]:
-    """Load consolidated context from storage or rebuild from artifacts.
+    """Load consolidated context from storage or rebuild from artifacts/DB.
+    
+    Tries multiple strategies in order:
+    1. Load from storage (consolidated_context.json)
+    2. Rebuild from artifacts (context.json + graphs)
+    3. Rebuild from DB (checklist items)
     
     Args:
         project_id: Project identifier
@@ -207,18 +212,177 @@ def get_consolidated_context(project_id: str) -> Dict[str, Any]:
     storage = get_storage_adapter()
     path = CONSOLIDATED_PATH.format(project_id=project_id)
     
+    # Get repo_url from database to ensure it's always populated
+    repo_url = _get_repo_url_from_db(project_id)
+    
+    # Strategy 1: Try loading from storage
     try:
         content = storage.retrieve(path)
         if isinstance(content, (bytes, bytearray)):
             content = content.decode('utf-8')
-        return json.loads(content)
+        context = json.loads(content)
+        # Always ensure project_id is set from parameter
+        context.setdefault("project_id", project_id)
+        # Ensure repo_url is set from DB if not in context
+        if not context.get("repo_url") and repo_url:
+            context["repo_url"] = repo_url
+        return context
     except Exception as e:
-        logger.warning(f"Could not load consolidated context from {path}: {e}")
+        logger.warning(f"[Context] Could not load from storage ({path}): {e}")
+    
+    # Strategy 2: Rebuild from artifacts
+    try:
+        context = _rebuild_from_artifacts(project_id, storage, repo_url)
+        if context.get("components") or context.get("stack", {}).get("languages"):
+            logger.info(f"[Context] Rebuilt context from artifacts for {project_id}")
+            return context
+    except Exception as e:
+        logger.warning(f"[Context] Could not rebuild from artifacts: {e}")
+    
+    # Strategy 3: Rebuild from DB
+    try:
+        context = rebuild_context_from_db(project_id)
+        if context and context.get("project_id"):
+            logger.info(f"[Context] Rebuilt context from DB for {project_id}")
+            return context
+    except Exception as e:
+        logger.warning(f"[Context] Could not rebuild from DB: {e}")
+    
+    # All strategies failed - return minimal context
+    logger.warning(f"[Context] All rebuild strategies failed for {project_id}")
+    return {
+        "project_id": project_id,
+        "project_name": "Unknown",
+        "repo_url": repo_url,
+        "analysis_status": "no_context_available"
+    }
+
+
+def _get_repo_url_from_db(project_id: str) -> str:
+    """Get repo_url from database (checklist or jobs)."""
+    try:
+        from app.db import get_session, ChecklistItemModel, JobModel
+        session = get_session()
         
-        return _rebuild_from_artifacts(project_id, storage)
+        # Try checklist first
+        checklist_item = session.query(ChecklistItemModel).filter(
+            ChecklistItemModel.project_id == project_id,
+            ChecklistItemModel.key == "repo_exists"
+        ).first()
+        
+        if checklist_item and checklist_item.value:
+            session.close()
+            return checklist_item.value
+        
+        # Try completed repo_ingest job
+        job = session.query(JobModel).filter(
+            JobModel.project_id == project_id,
+            JobModel.job_type == "repo_ingest",
+            JobModel.status == "completed"
+        ).first()
+        
+        if job and job.payload:
+            try:
+                import json
+                payload = json.loads(job.payload)
+                repo_url = payload.get("repo_url", "")
+                session.close()
+                return repo_url
+            except:
+                pass
+        
+        session.close()
+        return ""
+    except Exception as e:
+        logger.warning(f"Could not get repo_url from DB: {e}")
+        return ""
 
 
-def _rebuild_from_artifacts(project_id: str, storage) -> Dict[str, Any]:
+def rebuild_context_from_db(project_id: str) -> Dict[str, Any]:
+    """Rebuild consolidated context directly from database checklist.
+    
+    This function is called when:
+    - Storage file is missing
+    - We want to ensure context is always available
+    
+    Args:
+        project_id: Project identifier
+        
+    Returns:
+        Consolidated context built from DB state
+    """
+    from app.db import get_session, ChecklistItemModel, ProjectModel
+    
+    session = get_session()
+    try:
+        # Get project info
+        project = session.query(ProjectModel).filter(ProjectModel.id == project_id).first()
+        project_name = project.name if project and project.name else ""
+        
+        # Get all checklist items
+        checklist_items = session.query(ChecklistItemModel).filter(
+            ChecklistItemModel.project_id == project_id
+        ).all()
+        
+        # Build context from checklist
+        context = {
+            "project_id": project_id,
+            "project_name": project_name,
+            "repo_url": "",
+            "overview": {},
+            "stack": {"languages": [], "frameworks": [], "databases": []},
+            "components": [],
+            "dependencies": [],
+            "flows": [],
+            "assumptions": [],
+            "open_questions": [],
+            "uncertainties": [],
+            "graphs": {},
+        }
+        
+        # Extract values from checklist
+        for item in checklist_items:
+            key = item.key
+            status = item.status
+            value = item.value
+            
+            if status in ("confirmed", "inferred") and value:
+                if key == "repo_exists" and value:
+                    # Handle repo URL
+                    if value.startswith("http") or value.startswith("git"):
+                        context["repo_url"] = value
+                elif key == "product_goal":
+                    context["overview"]["summary"] = value
+                elif key == "target_users":
+                    context["overview"]["target_users"] = value
+                elif key == "application_type":
+                    context["overview"]["application_type"] = value
+                # Add more key mappings as needed
+        
+        # Get repo_url from checklist if not set
+        if not context.get("repo_url"):
+            repo_item = next((i for i in checklist_items if i.key == "repo_exists"), None)
+            if repo_item and repo_item.value:
+                context["repo_url"] = repo_item.value
+        
+        context["analysis_status"] = "rebuilt_from_db"
+        
+        logger.info(f"[ContextRebuild] Built context from DB for project {project_id}")
+        return context
+        
+    except Exception as e:
+        logger.error(f"[ContextRebuild] Failed to rebuild from DB: {e}")
+        return {
+            "project_id": project_id,
+            "project_name": "",
+            "error": str(e),
+            "analysis_status": "rebuild_failed"
+        }
+    finally:
+        session.close()
+
+
+def _rebuild_from_artifacts(project_id: str, storage, repo_url: str = "") -> Dict[str, Any]:
     """Rebuild consolidated context from individual artifact files.
     
     This is a fallback if consolidated context is not available.
@@ -226,6 +390,7 @@ def _rebuild_from_artifacts(project_id: str, storage) -> Dict[str, Any]:
     Args:
         project_id: Project identifier
         storage: Storage adapter instance
+        repo_url: Repo URL from database (optional)
         
     Returns:
         Rebuilt consolidated context
@@ -248,6 +413,10 @@ def _rebuild_from_artifacts(project_id: str, storage) -> Dict[str, Any]:
         "system_graph.dsl",
         "flow_graph.dsl",
     ]
+    
+    # Add repo_url to context if not present and we have one
+    if repo_url and not context.get("repo_url"):
+        context["repo_url"] = repo_url
     
     graph_artifacts = {}
     for gf in graph_files:

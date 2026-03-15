@@ -5,11 +5,6 @@ import re
 from typing import Dict, Any, List, Optional
 
 from app.discovery.question_intents import QUESTION_INTENTS
-from app.discovery.answer_extraction_contract import build_compact_prompt
-from app.discovery.answer_extraction_parser import (
-    safe_parse_compact_response, 
-    normalize_compact_response,
-)
 
 logger = logging.getLogger(__name__)
 

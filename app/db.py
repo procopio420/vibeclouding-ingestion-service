@@ -1,7 +1,7 @@
 """Alembic-driven Postgres DB access for Phase 1 (Postgres-only)."""
 import os
 from datetime import datetime
-from sqlalchemy import create_engine, Column, String, DateTime, Text, ForeignKey
+from sqlalchemy import create_engine, Column, String, DateTime, Text, ForeignKey, Boolean
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://vibe:vibe@db:5432/vibe_context")
@@ -77,6 +77,11 @@ class DiscoverySessionModel(Base):
     full_readiness_result = Column(Text, nullable=True)
     full_readiness_at = Column(DateTime, nullable=True)
     last_meaningful_update_at = Column(DateTime, nullable=True)
+    # Architecture trigger tracking
+    eligible_for_architecture = Column(Boolean, default=False)
+    architecture_triggered = Column(Boolean, default=False)
+    architecture_triggered_at = Column(DateTime, nullable=True)
+    architecture_trigger_status = Column(String(50), nullable=True)
 
 
 class DiscoveryQuestionLifecycleModel(Base):

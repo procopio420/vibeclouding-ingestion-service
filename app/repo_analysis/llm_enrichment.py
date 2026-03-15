@@ -121,37 +121,51 @@ def choose_model(models: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Choose the best model from the available list.
     
     Priority:
-    1. stable flash-lite
-    2. stable flash
-    3. stable pro
-    4. preview flash-lite
-    5. preview flash
-    6. preview pro
+    1. gemini-2.5-flash (latest stable)
+    2. gemini-2.0-flash (stable)
+    3. stable flash-lite (if available and not deprecated)
+    4. stable pro
+    5. preview flash-lite
+    6. preview flash
+    7. preview pro
+    
+    Deprecated models (gemini-2.0-flash-lite*) are excluded as they return 404.
     """
     if not models:
         return None
     
+    DEPRECATED_PATTERNS = ["gemini-2.0-flash-lite", "gemini-1.5-flash-lite"]
+    
+    def is_deprecated(model: Dict) -> bool:
+        name = model["name"].lower()
+        return any(pattern in name for pattern in DEPRECATED_PATTERNS)
+    
     def model_priority(model: Dict) -> tuple:
         name = model["name"].lower()
         
-        # Check if preview or stable
+        if is_deprecated(model):
+            return (100, name)
+        
         is_preview = "preview" in name or "latest" in name
         
-        # Priority: flash-lite > flash > pro
-        if "flash-lite" in name and not is_preview:
-            return (0, name)  # stable flash-lite
+        if "gemini-2.5-flash" in name:
+            return (0, name)
+        elif "gemini-2.0-flash" in name and "lite" not in name:
+            return (1, name)
+        elif "flash-lite" in name and not is_preview:
+            return (2, name)
         elif "flash" in name and not is_preview:
-            return (1, name)  # stable flash
+            return (3, name)
         elif "pro" in name and not is_preview:
-            return (2, name)  # stable pro
+            return (4, name)
         elif "flash-lite" in name:
-            return (3, name)  # preview flash-lite
+            return (5, name)
         elif "flash" in name:
-            return (4, name)  # preview flash
+            return (6, name)
         elif "pro" in name:
-            return (5, name)  # preview pro
+            return (7, name)
         else:
-            return (10, name)  # other
+            return (10, name)
     
     # Filter out dead models
     alive_models = [m for m in models if m["name"] not in _dead_models]
@@ -240,9 +254,11 @@ def generate_chat(api_key: str, prompt: str, system_instruction: str = None) -> 
     This is the main entry point for chat generation.
     """
     logger.info("Starting dynamic model selection for chat")
+    logger.debug(f"generate_chat called with prompt length: {len(prompt)} chars")
     
     try:
         models = list_models(api_key)
+        logger.debug(f"Discovered {len(models)} models with generateContent support")
     except Exception as e:
         logger.error(f"Failed to list models: {e}")
         return ""
@@ -253,14 +269,31 @@ def generate_chat(api_key: str, prompt: str, system_instruction: str = None) -> 
         return ""
     
     model_name = selected["name"]
+    logger.info(f"Selected model for chat: {model_name}")
     contents = [{"parts": [{"text": prompt}]}]
     
     generation_config = {
         "temperature": 0.7,
-        "maxOutputTokens": 256,
     }
     
+    def is_response_complete(text: str) -> bool:
+        """Check if response appears complete (not truncated)."""
+        if not text:
+            return False
+        text = text.strip()
+        # Check for incomplete patterns
+        if text.rstrip().endswith(('...', '…', ',', '-', '–')):
+            return False
+        # Check if ends without proper sentence ending
+        end_chars = set('.!?')
+        if len(text) > 30 and text[-1] not in end_chars:
+            # Allow if it's a short fragment
+            if len(text.split()) > 10:
+                return False
+        return True
+    
     try:
+        logger.debug(f"Calling Gemini API with model: {model_name}")
         result = _call_gemini_generate_content(
             api_key=api_key,
             model=model_name,
@@ -268,12 +301,28 @@ def generate_chat(api_key: str, prompt: str, system_instruction: str = None) -> 
             generation_config=generation_config
         )
         
+        # Log full response for debugging
+        logger.debug(f"Gemini API response: {result}")
+        
         # Extract text from response
         if "candidates" not in result or not result["candidates"]:
             logger.error(f"Gemini response has no candidates: {result}")
             return ""
         
         candidate = result["candidates"][0]
+        
+        # Log finish reason for debugging truncation
+        finish_reason = candidate.get("finishReason", "UNKNOWN")
+        logger.info(f"Gemini finish reason: {finish_reason}")
+        
+        # Log token usage if available
+        if "usageMetadata" in result:
+            usage = result.get("usageMetadata", {})
+            logger.info(f"Token usage - prompt: {usage.get('promptTokenCount', '?')}, completion: {usage.get('candidatesTokenCount', '?')}")
+        
+        if finish_reason == "MAX_TOKENS":
+            logger.warning(f"Response truncated due to max tokens for model {model_name}")
+        
         if "content" not in candidate:
             logger.error(f"Gemini response has no content: {result}")
             return ""
@@ -284,12 +333,19 @@ def generate_chat(api_key: str, prompt: str, system_instruction: str = None) -> 
             return ""
         
         text = content["parts"][0]["text"]
-        logger.info(f"Gemini chat response received: {text[:100]}...")
+        logger.info(f"Gemini chat response received: length={len(text)}, preview: {text[:100]}...")
+        
+        # Check for truncation
+        if not is_response_complete(text):
+            logger.warning(f"Response may be incomplete/truncated: {text[-100:] if len(text) > 100 else text}")
+        
+        logger.debug(f"Full Gemini response text: {text}")
         
         return text.strip()
         
     except Exception as e:
         error_str = str(e)
+        logger.error(f"generate_chat exception: {error_str}")
         
         if "404" in error_str or "NOT_FOUND" in error_str:
             logger.warning(f"Model {model_name} failed with 404, trying next model...")
@@ -343,7 +399,6 @@ class GeminiAnalyzer(LLMAnalyzer):
                 contents=[{"parts": [{"text": prompt}]}],
                 generation_config={
                     "temperature": 0.3,
-                    "maxOutputTokens": 1024,
                 }
             )
             
@@ -448,6 +503,8 @@ def get_llm_analyzer() -> LLMAnalyzer:
     provider = os.environ.get("LLM_PROVIDER", "none")
     
     logger.info(f"LLM Analyzer factory: mode={mode}, provider={provider}")
+    logger.debug(f"Environment variables: ANALYSIS_MODE={mode}, LLM_PROVIDER={provider}")
+    logger.debug(f"GEMINI_API_KEY present: {bool(os.environ.get('GEMINI_API_KEY'))}")
     
     if mode == "local_only" or provider == "none":
         logger.info("Using NoOpAnalyzer (local_only mode or no provider)")

@@ -53,19 +53,49 @@ async def list_projects():
     """Get all projects with their IDs."""
     session = get_session()
     projects = session.query(ProjectModel).order_by(ProjectModel.created_at.desc()).all()
+    
+    # Get repo_urls from checklist or jobs
+    from app.db import JobModel, ChecklistItemModel
+    
+    result = []
+    for p in projects:
+        project_data = {
+            "project_id": p.id,
+            "project_name": p.name,
+            "summary": p.summary,
+            "status": p.status,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+            "repo_url": None,
+        }
+        
+        # Try to get repo_url from checklist
+        checklist_item = session.query(ChecklistItemModel).filter(
+            ChecklistItemModel.project_id == p.id,
+            ChecklistItemModel.key == "repo_exists"
+        ).first()
+        
+        if checklist_item and checklist_item.value:
+            project_data["repo_url"] = checklist_item.value
+        else:
+            # Try to get from successful repo_ingest job
+            job = session.query(JobModel).filter(
+                JobModel.project_id == p.id,
+                JobModel.job_type == "repo_ingest",
+                JobModel.status == "completed"
+            ).first()
+            
+            if job and job.payload:
+                import json
+                try:
+                    payload = json.loads(job.payload)
+                    project_data["repo_url"] = payload.get("repo_url")
+                except:
+                    pass
+        
+        result.append(project_data)
+    
     session.close()
-    return {
-        "projects": [
-            {
-                "project_id": p.id,
-                "project_name": p.name,
-                "summary": p.summary,
-                "status": p.status,
-                "created_at": p.created_at.isoformat() if p.created_at else None,
-            }
-            for p in projects
-        ]
-    }
+    return {"projects": result}
 
 
 @router.get("/projects/{project_id}/status")
