@@ -11,6 +11,7 @@ WebSocket events:
 - connection.ready: Full state on connect (session, messages, checklist, readiness, questions)
 
 This file also exposes GET /projects/{id}/discovery/panel for the right-side repo/architecture panel.
+Repo linking uses POST /projects/{id}/repo (see ingest routes).
 """
 import logging
 from typing import Any, Dict

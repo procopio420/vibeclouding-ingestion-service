@@ -30,7 +30,7 @@ async def ingest_text(project_id: str, payload: IngestTextRequest):
     return {"ingest_id": ingest_id, "status": "queued", "type": "text", "project_id": project_id}
 
 
-@router.post("/projects/{project_id}/ingest/repo", response_model=dict)
+@router.post("/projects/{project_id}/repo", response_model=dict)
 async def ingest_repo(project_id: str, payload: IngestRepoRequest):
     init_db()
     session = get_session()
