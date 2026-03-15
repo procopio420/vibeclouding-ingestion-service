@@ -12,7 +12,7 @@ from app.api.schemas import (
 )
 
 from app.celery_app import celery_app
-from app.db import init_db, get_session, JobModel
+from app.db import init_db, get_session, JobModel, ProjectModel
 from datetime import datetime
 
 router = APIRouter()
@@ -34,6 +34,13 @@ async def ingest_text(project_id: str, payload: IngestTextRequest):
 async def ingest_repo(project_id: str, payload: IngestRepoRequest):
     init_db()
     session = get_session()
+    
+    # Check if project exists
+    project = session.query(ProjectModel).filter(ProjectModel.id == project_id).first()
+    if not project:
+        session.close()
+        raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+    
     results = []
     if not getattr(payload, 'repos', None):
         raise HTTPException(status_code=400, detail="repos field is required")
