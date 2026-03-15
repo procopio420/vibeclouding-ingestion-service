@@ -156,6 +156,7 @@ class DiscoveryOrchestrator:
         full_result = None
         
         is_meaningful = self.chat_service.is_meaningful_message(message, checklist_updates, repo_url)
+        logger.info(f"[Discovery] {project_id} - is_meaningful: {is_meaningful}")
         
         if is_meaningful:
             self._update_meaningful_timestamp(project_id)
@@ -167,6 +168,7 @@ class DiscoveryOrchestrator:
             )
             lifecycle.current_focus_key = next_key
             
+            logger.info(f"[Discovery] {project_id} - READINESS: status={quick_result.get('status')}, coverage={quick_result.get('coverage')}, missing_critical={quick_result.get('missing_critical_items')}")
             logger.info(f"[Discovery] {project_id} - selected next_key: {next_key}, turn: {turn_count}")
             
             progress = self.progress.compute_progress(checklist, quick_result)
@@ -210,13 +212,23 @@ class DiscoveryOrchestrator:
         # Return lifecycle state for debugging
         lifecycle_snapshot = list(lifecycle.asked_keys)
         
+        # Build understanding summary from current checklist
+        understanding_summary = self._build_understanding_summary(updated_checklist)
+        
+        # Compute next best step
+        next_step = self._compute_next_step(updated_checklist, lifecycle, final_readiness or {})
+        
         logger.info(f"[Discovery] {project_id} - FINAL STATE: next_key={lifecycle.current_focus_key}, turn={turn_count}")
+        logger.info(f"[Discovery] {project_id} - UNDERSTANDING_SUMMARY: {understanding_summary}")
+        logger.info(f"[Discovery] {project_id} - NEXT_STEP: {next_step}")
         
         return {
             "user_message": user_msg,
             "assistant_message": assistant_msg,
             "checklist": updated_checklist,
             "readiness": final_readiness,
+            "understanding_summary": understanding_summary,
+            "next_best_step": next_step,
             "repo_url_detected": repo_url,
             "meaningful_update": is_meaningful,
             "lifecycle": lifecycle_snapshot,
@@ -493,6 +505,52 @@ Mantenha sua resposta curta (2-3 frases), conversacional e não-técnica. Faça 
         except Exception as e:
             logger.warning(f"[Discovery] question_selector failed: {e}")
             return None
+
+    def _build_understanding_summary(self, checklist: List[Dict]) -> Dict[str, Any]:
+        """Build understanding summary from current checklist items."""
+        items = []
+        for it in checklist:
+            status = it.get("status")
+            if status in ("confirmed", "inferred"):
+                # Use full value field first, then evidence, then status
+                value = it.get("value") or it.get("evidence") or status
+                items.append({
+                    "key": it.get("key"),
+                    "label": it.get("label"),
+                    "value": value,
+                    "source": status,
+                })
+        return {"items": items}
+
+    def _compute_next_step(self, checklist: List[Dict], lifecycle, readiness: Dict) -> Dict[str, Any]:
+        """Compute next best step from current state."""
+        from app.discovery.question_intents import QUESTION_INTENTS
+        from app.discovery.config import NEXT_STEP_DESCRIPTIONS_PT, NEXT_STEP_FALLBACK
+        
+        next_key = lifecycle.current_focus_key
+        if not next_key:
+            return {"title": None, "description": None, "type": None}
+        
+        # Get title from QUESTION_INTENTS
+        title = None
+        for intent, meta in QUESTION_INTENTS.items():
+            if meta.get("checklist_key") == next_key:
+                title = meta.get("question")
+                break
+        if not title:
+            title = f"{NEXT_STEP_FALLBACK}{next_key}"
+        
+        # Get description
+        step_type = "repo" if next_key == "repo_exists" else "clarification"
+        description = NEXT_STEP_DESCRIPTIONS_PT.get(next_key)
+        if not description:
+            # Try to get from QUESTION_INTENTS
+            for intent, meta in QUESTION_INTENTS.items():
+                if meta.get("checklist_key") == next_key:
+                    description = meta.get("question")
+                    break
+        
+        return {"title": title, "description": description, "type": step_type}
 
 
 __all__ = ["DiscoveryOrchestrator"]

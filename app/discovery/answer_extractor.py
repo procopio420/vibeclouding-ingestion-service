@@ -251,10 +251,13 @@ Responda ONLY com JSON válido, sem explicação."""
                     # English
                     "software", "system", "platform", "application", "manage", "managing",
                     "build", "building", "create", "develop", "making",
-                    # Portuguese
+                    # Portuguese - extended
                     "software de", "sistema de", "gestão de", "plataforma", 
                     "fazemos", "produzimos", "vendemos", "gestão", "fábrica",
-                    "postes", "manilhas", "concreto", "artefatos"
+                    "postes", "manilhas", "concreto", "artefatos",
+                    "é um", "são", "gostaria de criar", "preciso de", "precisamos de",
+                    "para gerenciar", "para controlar", "para automatizar",
+                    "sistema interno", "sistema para", "plataforma para",
                 ],
                 "inferred": [
                     "project", "business", "company", "startup", "empresa"
@@ -265,9 +268,12 @@ Responda ONLY com JSON válido, sem explicação."""
                     # English
                     "customers", "clients", "users", "b2b", "b2c", "employees",
                     "selling to", "sell to", "stores", "businesses", "market",
-                    # Portuguese
+                    # Portuguese - extended
                     "clientes", "lojas", "empresas", "vendemos para", "para lojas",
-                    "b2b", "b2c", "consumidores"
+                    "b2b", "b2c", "consumidores",
+                    "para empresa", "para clientes", "para funcionários", "nossos clientes",
+                    "vendido para", "卖给", "funcionários", "colaboradores",
+                    "usuários usam", "usuários utilizam", "pessoas usam",
                 ],
                 "inferred": [
                     "people", "people who", "target"
@@ -278,9 +284,11 @@ Responda ONLY com JSON válido, sem explicação."""
                     # English
                     "web app", "mobile app", "api", "chatbot", "website", "web application",
                     "mobile application", "saas", "software as a service", "platform",
-                    # Portuguese
+                    # Portuguese - extended
                     "aplicativo", "app móvil", "app móvel", "sistema", "plataforma",
-                    "loja virtual", "e-commerce", "site", "plataforma web"
+                    "loja virtual", "e-commerce", "site", "plataforma web",
+                    "sistema interno", "sistema web", "sistema mobile",
+                    "plataforma online", "app web", "aplicação web",
                 ],
                 "inferred": [
                     "online", "digital", "computer", "desktop"
@@ -292,9 +300,12 @@ Responda ONLY com JSON válido, sem explicação."""
                     "mobile", "cellphone", "smartphone", "whatsapp", "telegram",
                     "browser", "web browser", "website", "login", "access via",
                     "ios", "android", "app store", "play store",
-                    # Portuguese
+                    # Portuguese - extended
                     "mobile app", "app móvel", "celular", "whatsapp", "navegador",
-                    "site", "web", "computador", "relatório", "relatorios"
+                    "site", "web", "computador", "relatório", "relatorios",
+                    "pelos funcionários", "pelos usuários", "acesso via",
+                    "utilizado por", "via mobile", "via web",
+                    "computador para relatório", "mobile no dia a dia",
                 ],
                 "inferred": [
                     "channel", "access", "through"

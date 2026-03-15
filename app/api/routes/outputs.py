@@ -22,10 +22,12 @@ def _build_understanding_summary(project_id: str) -> Dict[str, Any]:
         for it in checklist:
             status = it.get("status")
             if status in ("confirmed", "inferred"):
+                # Use full value field first, then evidence, then status
+                value = it.get("value") or it.get("evidence") or status
                 items.append({
                     "key": it.get("key"),
                     "label": it.get("label"),
-                    "value": it.get("evidence") or status,
+                    "value": value,
                     "source": status,
                 })
         return {"items": items}
