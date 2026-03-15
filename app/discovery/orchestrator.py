@@ -120,10 +120,19 @@ class DiscoveryOrchestrator:
         logger.info(f"[Discovery] {project_id} - extraction result: {extraction}")
         
         checklist_updates = {}
+        # Build set of valid keys for safety check
+        valid_keys = {item.get("key") for item in checklist if item.get("key")}
+        
         for upd in extraction.get("updates", []) or []:
             key = upd.get("key")
             if not key:
                 continue
+            
+            # Safety check: skip items that don't exist in checklist
+            if key not in valid_keys:
+                logger.warning(f"[Discovery] {project_id} - Skipping update for non-existent checklist item: {key}")
+                continue
+            
             self.checklist_service.update_item(
                 project_id=project_id,
                 key=key,

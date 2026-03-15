@@ -12,21 +12,23 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_CHECKLIST_ITEMS = [
-    ("product_goal", "What does the project do?", "high"),
-    ("target_users", "Who are the target users?", "high"),
-    ("entry_channels", "How will users access the app?", "medium"),
-    ("application_type", "What type of application is it?", "medium"),
-    ("core_components", "What are the main components?", "medium"),
-    ("database", "Will you need a database?", "medium"),
-    ("cache_or_queue", "Will you need caching or queues?", "medium"),
-    ("background_processing", "Will there be background tasks?", "medium"),
-    ("external_integrations", "Will it connect to external APIs?", "medium"),
-    ("auth_model", "Will you need authentication?", "medium"),
-    ("file_storage", "Will you store files or images?", "low"),
-    ("traffic_expectation", "What's the expected traffic?", "low"),
-    ("availability_requirement", "Is downtime a problem?", "low"),
-    ("cost_priority", "Cost or scale priority?", "low"),
-    ("compliance_or_sensitive_data", "Any compliance requirements?", "low"),
+    ("repo_exists", "Você já tem um repositório no GitHub?", "high"),
+    ("product_goal", "O que seu projeto faz?", "high"),
+    ("target_users", "Quem são os usuários alvo?", "high"),
+    ("entry_channels", "Como os usuários acessarão o app?", "medium"),
+    ("application_type", "Que tipo de aplicação é?", "medium"),
+    ("core_components", "Quais são os principais componentes?", "medium"),
+    ("database", "Você vai precisar de banco de dados?", "medium"),
+    ("cache_or_queue", "Você vai precisar de cache ou filas?", "medium"),
+    ("background_processing", "Haverá tarefas em background?", "medium"),
+    ("external_integrations", "Vai conectar com APIs externas?", "medium"),
+    ("auth_model", "Você vai precisar de autenticação?", "medium"),
+    ("file_storage", "Você vai armazenar arquivos ou imagens?", "low"),
+    ("traffic_expectation", "Qual é o tráfego esperado?", "low"),
+    ("availability_requirement", "Downtime é um problema?", "low"),
+    ("cost_priority", "Prioridade em custo ou escala?", "low"),
+    ("compliance_or_sensitive_data", "Requisitos de conformidade?", "low"),
+    ("project_name", "Nome do projeto", "low"),
 ]
 
 
