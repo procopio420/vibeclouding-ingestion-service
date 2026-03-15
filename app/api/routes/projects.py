@@ -2,9 +2,15 @@ from fastapi import APIRouter, HTTPException
 import uuid
 from datetime import datetime
 
-from app.api.schemas import ProjectCreate, ProjectInfo
+from app.api.schemas import (
+    ProjectCreate,
+    ProjectInfo,
+    RevisionDecisionUpdate,
+    RevisionDecisionResponse,
+)
 from app.db import init_db, get_session, ProjectModel
 from app.discovery.orchestrator import DiscoveryOrchestrator
+from app.repositories.architecture_result_repo import ArchitectureResultRepository
 
 router = APIRouter()
 
@@ -45,6 +51,7 @@ async def get_project(project_id: str):
         "project_id": proj.id,
         "project_name": proj.name,
         "summary": proj.summary,
+        "revision_decision": proj.revision_decision,
     }
 
 
@@ -66,6 +73,7 @@ async def list_projects():
             "status": p.status,
             "created_at": p.created_at.isoformat() if p.created_at else None,
             "repo_url": None,
+            "revision_decision": p.revision_decision,
         }
         
         # Try to get repo_url from checklist
@@ -106,3 +114,34 @@ async def get_project_status(project_id: str):
     if not proj:
         return {"project_id": project_id, "status": "not_found"}
     return {"project_id": project_id, "status": "existing"}
+
+
+@router.get("/projects/{project_id}/revision-decision", response_model=RevisionDecisionResponse)
+async def get_revision_decision(project_id: str):
+    """Get the current revision decision (selected vibe) for the project."""
+    session = get_session()
+    proj = session.query(ProjectModel).filter(ProjectModel.id == project_id).first()
+    session.close()
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return RevisionDecisionResponse(decision=proj.revision_decision)
+
+
+@router.put("/projects/{project_id}/revision-decision", response_model=RevisionDecisionResponse)
+async def set_revision_decision(project_id: str, payload: RevisionDecisionUpdate):
+    """Set the revision decision (vibe_economica or vibe_performance) for terraform generation."""
+    session = get_session()
+    try:
+        proj = session.query(ProjectModel).filter(ProjectModel.id == project_id).first()
+        if not proj:
+            raise HTTPException(status_code=404, detail="Project not found")
+        if ArchitectureResultRepository().get_latest(project_id) is None:
+            raise HTTPException(
+                status_code=400,
+                detail="No architecture result for this project; generate architecture first",
+            )
+        proj.revision_decision = payload.decision
+        session.commit()
+        return RevisionDecisionResponse(decision=proj.revision_decision)
+    finally:
+        session.close()

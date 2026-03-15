@@ -17,6 +17,7 @@ class ProjectModel(Base):
     summary = Column(Text, nullable=True)
     status = Column(String(50), default="created", index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    revision_decision = Column(String(50), nullable=True)  # vibe_economica | vibe_performance
 
 class JobModel(Base):
     __tablename__ = "jobs"

@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from typing import List, Literal, Optional, Dict, Any
 
 
 # Core project creation payload
@@ -11,6 +11,19 @@ class ProjectCreate(BaseModel):
 class ProjectInfo(BaseModel):
     project_id: str
     status: str
+
+
+class RevisionDecisionUpdate(BaseModel):
+    decision: Literal["vibe_economica", "vibe_performance"] = Field(
+        ..., description="Selected architecture vibe for terraform generation"
+    )
+
+
+class RevisionDecisionResponse(BaseModel):
+    decision: Optional[str] = Field(
+        None,
+        description="Selected vibe: vibe_economica, vibe_performance, or null if not set",
+    )
 
 
 # Ingestion payloads (per-type)
