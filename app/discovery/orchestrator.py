@@ -288,7 +288,7 @@ class DiscoveryOrchestrator:
     ) -> None:
         """Update discovery state based on current progress."""
         current_state = session["state"]
-        readiness_status = readiness.get("status", "not_ready") if readiness else "not_ready"
+        readiness_status = readiness.get("status", "not_ready") if isinstance(readiness, dict) else "not_ready"
         
         if current_state == "ingesting_sources":
             self.session_service.update_state(project_id, "clarifying_core_requirements")
@@ -384,7 +384,7 @@ Mantenha conversacional e friendly. Faça no máximo 1-2 perguntas."""
         if repo_url_detected:
             context_parts.append("O usuário compartilhou uma URL de repositório. Reconheça isso e informe que está analisando.")
         
-        readiness_status = readiness.get("status", "") if readiness else ""
+        readiness_status = readiness.get("status", "") if isinstance(readiness, dict) else ""
         
         if readiness_status == "ready_for_architecture":
             return "Ótimo! Com base na nossa conversa, tenho informações suficientes para ajudar com a arquitetura. Gostaria que eu prossiga com as recomendações de arquitetura?"

@@ -186,7 +186,10 @@ async def websocket_discovery(
     except WebSocketDisconnect:
         pass
     except Exception as e:
-        logger.error(f"WebSocket error: {e}")
+        # Log non-protocol errors only
+        error_str = str(e)
+        if "invalid status code" not in error_str.lower() and "connection closed" not in error_str.lower():
+            logger.error(f"WebSocket error: {e}")
         try:
             await websocket.send_json({
                 "type": ServerEventType.ERROR.value,
