@@ -1,7 +1,10 @@
-from fastapi import APIRouter, HTTPException
+import logging
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 import uuid
 from datetime import datetime
 
+from app.adapters import get_storage_adapter
 from app.api.schemas import (
     ProjectCreate,
     ProjectInfo,
@@ -11,6 +14,9 @@ from app.api.schemas import (
 from app.db import init_db, get_session, ProjectModel
 from app.discovery.orchestrator import DiscoveryOrchestrator
 from app.repositories.architecture_result_repo import ArchitectureResultRepository
+from app.services.terraform_generator_client import notify_terraform_process
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -128,20 +134,46 @@ async def get_revision_decision(project_id: str):
 
 
 @router.put("/projects/{project_id}/revision-decision", response_model=RevisionDecisionResponse)
-async def set_revision_decision(project_id: str, payload: RevisionDecisionUpdate):
+async def set_revision_decision(
+    project_id: str, payload: RevisionDecisionUpdate, background_tasks: BackgroundTasks
+):
     """Set the revision decision (vibe_economica or vibe_performance) for terraform generation."""
     session = get_session()
     try:
         proj = session.query(ProjectModel).filter(ProjectModel.id == project_id).first()
         if not proj:
             raise HTTPException(status_code=404, detail="Project not found")
-        if ArchitectureResultRepository().get_latest(project_id) is None:
+        arch_repo = ArchitectureResultRepository()
+        arch_result = arch_repo.get_latest(project_id)
+        if arch_result is None:
             raise HTTPException(
                 status_code=400,
                 detail="No architecture result for this project; generate architecture first",
             )
         proj.revision_decision = payload.decision
         session.commit()
+
+        json_url_r2 = ""
+        storage = get_storage_adapter()
+        if hasattr(storage, "get_presigned_get_url") and arch_result.raw_payload_storage_key:
+            try:
+                json_url_r2 = storage.get_presigned_get_url(
+                    arch_result.raw_payload_storage_key, expires_in=3600
+                )
+            except Exception as e:
+                logger.warning(
+                    "Could not get presigned URL for architecture result: %s", e
+                )
+        else:
+            logger.debug(
+                "Storage adapter does not support presigned URLs or no storage key; "
+                "skipping terraform process notification"
+            )
+        if json_url_r2:
+            background_tasks.add_task(
+                notify_terraform_process, project_id, payload.decision, json_url_r2
+            )
+
         return RevisionDecisionResponse(decision=proj.revision_decision)
     finally:
         session.close()

@@ -75,10 +75,10 @@ class R2StorageAdapter(StorageAdapter):
     
     def list(self, prefix: str) -> List[str]:
         """List files in R2 with given prefix.
-        
+
         Args:
             prefix: Path prefix to search
-            
+
         Returns:
             List of relative paths
         """
@@ -93,3 +93,20 @@ class R2StorageAdapter(StorageAdapter):
         except Exception as e:
             logger.warning(f"Error listing objects with prefix {prefix}: {e}")
             return []
+
+    def get_presigned_get_url(self, path: str, expires_in: int = 3600) -> str:
+        """Return a presigned GET URL so the object can be fetched via HTTP without credentials.
+
+        Args:
+            path: Relative path (storage key) of the object.
+            expires_in: URL validity in seconds (default 1 hour).
+
+        Returns:
+            Presigned HTTP URL string.
+        """
+        url = self.client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": self.bucket, "Key": path},
+            ExpiresIn=expires_in,
+        )
+        return url
