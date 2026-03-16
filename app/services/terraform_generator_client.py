@@ -1,6 +1,7 @@
 """Client for notifying the terraform generator service when a revision decision is set."""
 import logging
 import os
+import time
 import uuid
 from datetime import datetime
 
@@ -30,7 +31,11 @@ def notify_terraform_process(project_id: str, decision: str, json_url_r2: str) -
     """
     base_url = os.environ.get("TERRAFORM_GENERATOR_URL", "").strip()
     if not base_url:
-        logger.debug("TERRAFORM_GENERATOR_URL not configured, skipping terraform process notification")
+        logger.info(
+            "terraform_generator_skip url_not_configured project_id=%s decision=%s",
+            project_id,
+            decision,
+        )
         return False
 
     process_url = f"{base_url.rstrip('/')}/process"
@@ -50,6 +55,14 @@ def notify_terraform_process(project_id: str, decision: str, json_url_r2: str) -
     if secret:
         headers["X-Terraform-Secret"] = secret
 
+    logger.info(
+        "terraform_generator_request_start url=%s project_id=%s decision=%s event_id=%s",
+        process_url,
+        project_id,
+        decision,
+        event_id,
+    )
+    start = time.monotonic()
     try:
         response = requests.post(
             process_url,
@@ -57,15 +70,24 @@ def notify_terraform_process(project_id: str, decision: str, json_url_r2: str) -
             headers=headers,
             timeout=10,
         )
+        duration_ms = (time.monotonic() - start) * 1000
         response.raise_for_status()
         logger.info(
-            f"Terraform process notified for project {project_id}: "
-            f"event_id={event_id}, status={response.status_code}"
+            "terraform_generator_request_success project_id=%s event_id=%s status=%s duration_ms=%.0f",
+            project_id,
+            event_id,
+            response.status_code,
+            duration_ms,
         )
         return True
     except requests.RequestException as e:
+        duration_ms = (time.monotonic() - start) * 1000
         logger.warning(
-            f"Failed to notify terraform process for project {project_id}: {e}"
+            "terraform_generator_request_failed project_id=%s event_id=%s duration_ms=%.0f error=%s",
+            project_id,
+            event_id,
+            duration_ms,
+            e,
         )
         return False
 

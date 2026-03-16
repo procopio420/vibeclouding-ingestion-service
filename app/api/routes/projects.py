@@ -165,11 +165,16 @@ async def set_revision_decision(
                     "Could not get presigned URL for architecture result: %s", e
                 )
         else:
-            logger.debug(
-                "Storage adapter does not support presigned URLs or no storage key; "
-                "skipping terraform process notification"
+            logger.info(
+                "terraform_generator_skip no_presigned_url project_id=%s (storage has no get_presigned_get_url or no storage key)",
+                project_id,
             )
         if json_url_r2:
+            logger.info(
+                "terraform_generator_scheduled project_id=%s decision=%s",
+                project_id,
+                payload.decision,
+            )
             background_tasks.add_task(
                 notify_terraform_process, project_id, payload.decision, json_url_r2
             )
