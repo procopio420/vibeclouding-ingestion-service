@@ -48,8 +48,6 @@ Integrações relevantes:
 | *Laisa Rio* | *Software Engineer* | [GitHub](https://github.com/laisario/) / [LinkedIn](https://www.linkedin.com/in/laisa-rio/) |
 | *Paulo Boccaletti* | *Tech Leader* | [GitHub](https://github.com/pboccaletti) / [LinkedIn](https://www.linkedin.com/in/pauloboccaletti/) |
 
-*(Estrutura para preenchimento pela equipe.)*
-
 ---
 
 ## Como rodar localmente
