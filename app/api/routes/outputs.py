@@ -167,6 +167,31 @@ async def get_markdown_skeleton(project_id: str, filename: str) -> Dict[str, Any
         raise HTTPException(status_code=404, detail=f"Markdown file not found: {str(e)}")
 
 
+@router.get("/projects/{project_id}/terraform-files")
+async def get_terraform_files(project_id: str) -> Dict[str, Any]:
+    """Return all .tf files under output/{project_id}/ in R2 as JSON (filename -> content)."""
+    prefix = f"output/{project_id}/"
+    files: Dict[str, str] = {}
+    try:
+        paths = storage.list(prefix)
+    except Exception as e:
+        logger.warning("Failed to list terraform files for %s: %s", project_id, e)
+        return {"project_id": project_id, "files": {}}
+    tf_paths = [p for p in paths if p.endswith(".tf")]
+    for path in tf_paths:
+        try:
+            content = storage.retrieve(path)
+            if isinstance(content, (bytes, bytearray)):
+                content_str = content.decode("utf-8", errors="replace")
+            else:
+                content_str = str(content)
+            filename = path.split("/")[-1]
+            files[filename] = content_str
+        except Exception as e:
+            logger.warning("Failed to retrieve terraform file %s: %s", path, e)
+    return {"project_id": project_id, "files": files}
+
+
 @router.get("/projects/{project_id}/files")
 async def list_project_files(project_id: str) -> Dict[str, Any]:
     # List known artifact files for the project (skeleton + artifacts)
