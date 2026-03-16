@@ -1,9 +1,8 @@
-"""Minimal FastAPI skeleton for Phase 1 ingestion & normalization"""
+"""VibeCloud Ingestor — API de ingestão e normalização de contexto de projetos."""
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# Import routers (MVP skeleton)
 from app.api.routes import projects as projects_routes
 from app.api.routes import ingest as ingest_routes
 from app.api.routes import process as process_routes
@@ -19,7 +18,11 @@ from app.api.routes import discovery as discovery_routes
 # Discovery WebSocket
 from app.api.routes import discovery_ws as discovery_ws_routes
 
-app = FastAPI(title="PDD Phase 1 - Ingestion & Normalization (Skeleton)")
+app = FastAPI(
+    title="VibeCloud Ingestor",
+    description="API de ingestão de repositórios, descoberta guiada e geração de contexto para arquitetura.",
+    version="0.1.0",
+)
 
 # CORS middleware - allow specific origins for WebSocket compatibility
 app.add_middleware(
@@ -45,7 +48,7 @@ app.include_router(discovery_ws_routes.router)
 
 @app.get("/")
 async def root():
-    return {"status": "ok", "message": "PDD Phase 1 API skeleton"}
+    return {"status": "ok", "service": "VibeCloud Ingestor"}
 
 
 if __name__ == "__main__":

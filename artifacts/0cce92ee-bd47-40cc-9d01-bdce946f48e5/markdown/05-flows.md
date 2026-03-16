@@ -1,3 +1,0 @@
-# Flows
-
-*No flows detected.*
